@@ -1,0 +1,11 @@
+# Генерируется установщиком, содержит локальные пути и ID расширения
+native/run_host.bat
+native/com.videograbber.ytdlp.json
+
+# Python
+__pycache__/
+*.pyc
+
+# ОС
+Thumbs.db
+.DS_Store

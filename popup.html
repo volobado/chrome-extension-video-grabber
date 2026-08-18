@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Video Grabber</title>
+</head>
+<body>
+  <header>
+    <div class="logo">🎬 Video Grabber</div>
+    <button id="refresh" class="icon-btn" data-i18n-title="refresh">⟳</button>
+  </header>
+
+  <!-- Блок 1: лучшее качество через yt-dlp (YouTube и др.) -->
+  <section class="best">
+    <div class="best-title" data-i18n="bestTitle"></div>
+    <div class="best-sub" id="pageHost">…</div>
+    <div class="best-row">
+      <button id="ytdlpBest" class="btn primary">⬇ <span data-i18n="btnBest"></span></button>
+      <select id="ytdlpFormat" class="sel" data-i18n-title="qualityTitle">
+        <option value="best" data-i18n="qMax"></option>
+        <option value="1080" data-i18n="q1080"></option>
+        <option value="720" data-i18n="q720"></option>
+        <option value="480" data-i18n="q480"></option>
+        <option value="audio" data-i18n="qAudio"></option>
+      </select>
+    </div>
+    <div id="ytdlpStatus" class="status"></div>
+  </section>
+
+  <!-- Блок 2: прямые медиа со страницы -->
+  <section class="direct">
+    <div class="direct-head">
+      <span data-i18n="foundOnPage"></span>
+      <button id="clear" class="link-btn" data-i18n="clear" data-i18n-title="clearTitle"></button>
+    </div>
+    <ul id="mediaList" class="list"></ul>
+    <div id="empty" class="empty" data-i18n="emptyHint"></div>
+  </section>
+
+  <footer>
+    <span id="hostState" class="host-state" data-i18n="hostChecking"></span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

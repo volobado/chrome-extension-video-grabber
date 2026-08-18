@@ -1,0 +1,47 @@
+{
+  "extName":            { "message": "Video Grabber — save any video fast" },
+  "extDescription":     { "message": "Grabs videos from any page (MP4/WebM/HLS) and downloads them in one click. YouTube included, in max quality, via yt-dlp." },
+  "actionTitle":        { "message": "Video Grabber — download video from this page" },
+
+  "refresh":            { "message": "Refresh" },
+  "bestTitle":          { "message": "Download this page in best quality" },
+  "btnBest":            { "message": "Best (video+audio)" },
+  "qualityTitle":       { "message": "Quality" },
+  "qMax":               { "message": "Max" },
+  "q1080":              { "message": "≤ 1080p" },
+  "q720":               { "message": "≤ 720p" },
+  "q480":               { "message": "≤ 480p" },
+  "qAudio":             { "message": "Audio only (mp3)" },
+
+  "foundOnPage":        { "message": "Found on page" },
+  "clear":              { "message": "clear" },
+  "clearTitle":         { "message": "Clear the list" },
+  "emptyHint":          { "message": "Nothing yet. Hit ▶ Play on the video, then press ⟳." },
+
+  "fromNetwork":        { "message": "from network" },
+  "fromPlayer":         { "message": "from player" },
+  "downloadFile":       { "message": "Download file" },
+  "downloadStream":     { "message": "Download this stream via yt-dlp" },
+
+  "hostChecking":       { "message": "yt-dlp: checking…" },
+  "hostReady":          { "message": "yt-dlp: ready ✓" },
+  "hostMissing":        { "message": "yt-dlp: not installed (see README)" },
+  "hostNotInstalled":   { "message": "Native host not installed. Run install_native_host.py" },
+  "hostUnavailable":    { "message": "Host unavailable: $ERR$. Is it installed?",
+                          "placeholders": { "err": { "content": "$1" } } },
+
+  "statusStarting":     { "message": "Starting yt-dlp…" },
+  "statusDownloading":  { "message": "downloading…" },
+  "statusMerging":      { "message": "Merging video and audio…" },
+  "statusDone":         { "message": "Done: $FILE$",
+                          "placeholders": { "file": { "content": "$1" } } },
+  "statusSavedDefault": { "message": "saved to Downloads" },
+  "statusError":        { "message": "Error: $MSG$",
+                          "placeholders": { "msg": { "content": "$1" } } },
+  "statusSeeConsole":   { "message": "see console" },
+
+  "unitB":              { "message": "B" },
+  "unitKB":             { "message": "KB" },
+  "unitMB":             { "message": "MB" },
+  "unitGB":             { "message": "GB" }
+}

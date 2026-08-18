@@ -1,0 +1,47 @@
+{
+  "extName":            { "message": "Video Grabber — быстрое сохранение видео" },
+  "extDescription":     { "message": "Ловит видео на странице (MP4/WebM/HLS) и качает в один клик. YouTube тоже, в максимальном качестве, через yt-dlp." },
+  "actionTitle":        { "message": "Video Grabber — скачать видео со страницы" },
+
+  "refresh":            { "message": "Обновить" },
+  "bestTitle":          { "message": "Скачать эту страницу в лучшем качестве" },
+  "btnBest":            { "message": "Лучшее (видео+звук)" },
+  "qualityTitle":       { "message": "Качество" },
+  "qMax":               { "message": "Макс" },
+  "q1080":              { "message": "≤ 1080p" },
+  "q720":               { "message": "≤ 720p" },
+  "q480":               { "message": "≤ 480p" },
+  "qAudio":             { "message": "Только звук (mp3)" },
+
+  "foundOnPage":        { "message": "Найдено на странице" },
+  "clear":              { "message": "очистить" },
+  "clearTitle":         { "message": "Очистить список" },
+  "emptyHint":          { "message": "Пока ничего. Нажми ▶ Play на видео и обнови (⟳)." },
+
+  "fromNetwork":        { "message": "из сети" },
+  "fromPlayer":         { "message": "из плеера" },
+  "downloadFile":       { "message": "Скачать файл" },
+  "downloadStream":     { "message": "Скачать этот поток через yt-dlp" },
+
+  "hostChecking":       { "message": "yt-dlp: проверяю…" },
+  "hostReady":          { "message": "yt-dlp: готов ✓" },
+  "hostMissing":        { "message": "yt-dlp: не установлен (см. README)" },
+  "hostNotInstalled":   { "message": "Нативный хост не установлен. Запусти install_native_host.py" },
+  "hostUnavailable":    { "message": "Хост недоступен: $ERR$. Установлен ли он?",
+                          "placeholders": { "err": { "content": "$1" } } },
+
+  "statusStarting":     { "message": "Запускаю yt-dlp…" },
+  "statusDownloading":  { "message": "качаю…" },
+  "statusMerging":      { "message": "Склеиваю видео и звук…" },
+  "statusDone":         { "message": "Готово: $FILE$",
+                          "placeholders": { "file": { "content": "$1" } } },
+  "statusSavedDefault": { "message": "сохранено в Загрузки" },
+  "statusError":        { "message": "Ошибка: $MSG$",
+                          "placeholders": { "msg": { "content": "$1" } } },
+  "statusSeeConsole":   { "message": "см. консоль" },
+
+  "unitB":              { "message": "Б" },
+  "unitKB":             { "message": "КБ" },
+  "unitMB":             { "message": "МБ" },
+  "unitGB":             { "message": "ГБ" }
+}
