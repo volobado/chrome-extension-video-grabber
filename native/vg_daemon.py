@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 # Хост сверяет её со своей копией и перезапускает демон, если код обновился.
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 APP_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "VideoGrabber"
 DAEMON_FILE = APP_DIR / "daemon.json"
@@ -35,6 +35,12 @@ COOKIE_DIR = APP_DIR / "cookies"
 # Без задач и без запросов от браузера столько времени — выходим, чтобы не висеть в памяти.
 IDLE_EXIT_SEC = 30 * 60
 MAX_TASKS_KEPT = 200
+
+# YouTube перестаёт пускать yt-dlp старше пары месяцев: меняются клиенты плеера и
+# JS-челленджи, и загрузки начинают падать на ровном месте (403 в середине файла).
+# Поэтому демон сам подтягивает свежий yt-dlp, пока очередь пуста.
+UPDATE_EVERY_SEC = 3 * 24 * 3600
+UPDATE_TIMEOUT_SEC = 300
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 _log_lock = threading.Lock()
@@ -71,6 +77,63 @@ def find_ytdlp():
         return [sys.executable, "-m", "yt_dlp"]
     except Exception:
         return None
+
+
+def ytdlp_version(yt):
+    try:
+        r = subprocess.run(yt + ["--version", "--no-update", "--ignore-config"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60,
+                           creationflags=CREATE_NO_WINDOW)
+        return (r.stdout or "").strip().splitlines()[0].strip()
+    except Exception:
+        return ""
+
+
+def ytdlp_update_cmd(yt):
+    """Чем обновлять: pip того питона, которому принадлежит найденный yt-dlp,
+    либо самообновление отдельного бинаря. Обёртке из pip ключ -U не поможет —
+    она на него отвечает «обновляйся тем, чем ставил»."""
+    if len(yt) == 3 and yt[1] == "-m":          # sys.executable -m yt_dlp
+        py = yt[0]
+    else:
+        exe = Path(yt[0])
+        py = ""
+        # Обёртки pip лежат в Scripts/ рядом с python.exe (Windows) или прямо в bin/ (venv, posix).
+        if exe.parent.name.lower() in ("scripts", "bin"):
+            for cand in (exe.parent.parent / "python.exe", exe.parent.parent / "python3.exe",
+                         exe.parent / "python3", exe.parent / "python",
+                         exe.parent.parent / "python3", exe.parent.parent / "python"):
+                if cand.exists():
+                    py = str(cand)
+                    break
+        if not py:
+            return yt + ["-U"]                  # отдельный бинарь умеет обновлять себя сам
+    return [py, "-m", "pip", "install", "-U", "--disable-pip-version-check", "yt-dlp"]
+
+
+def update_ytdlp():
+    yt = find_ytdlp()
+    if not yt:
+        return
+    before = ytdlp_version(yt)
+    cmd = ytdlp_update_cmd(yt)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=UPDATE_TIMEOUT_SEC,
+                           creationflags=CREATE_NO_WINDOW)
+    except Exception as e:
+        log(f"обновление yt-dlp не вышло: {e}")
+        return
+
+    after = ytdlp_version(yt)
+    if after and before and after != before:
+        log(f"yt-dlp обновлён: {before} -> {after}")
+    elif r.returncode == 0:
+        log(f"yt-dlp свежий: {after or before or '?'}")
+    else:
+        detail = ((r.stderr or "") + (r.stdout or "")).strip().splitlines()
+        log(f"обновление yt-dlp не удалось (код {r.returncode}): {detail[-1][:200] if detail else ''}")
 
 
 def find_js_runtime():
@@ -414,6 +477,8 @@ class Manager:
                     if self.should_exit():
                         log("простой — демон завершается")
                         os._exit(0)
+                    # Только на пустой очереди: pip не перезапишет файлы под работающим yt-dlp.
+                    self.maybe_update_ytdlp()
                     continue
                 task["status"] = "running"
                 task["line"] = "запуск…"
@@ -430,6 +495,15 @@ class Manager:
                         task["message"] = str(e)
             finally:
                 self.release_cookies(task)
+
+    def maybe_update_ytdlp(self):
+        """Метку времени ставим до попытки: без сети иначе долбились бы каждые пять секунд."""
+        if time.time() - self.settings.get("ytdlp_checked", 0) < UPDATE_EVERY_SEC:
+            return
+        with self.lock:
+            self.settings["ytdlp_checked"] = time.time()
+            save_settings(self.settings)
+        update_ytdlp()
 
     def should_exit(self):
         with self.lock:

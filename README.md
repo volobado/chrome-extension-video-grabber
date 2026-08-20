@@ -124,7 +124,7 @@ Being straight with you:
 
 - **DRM-protected content** (Netflix, Disney+, paid platforms) is encrypted by design. Not supported, and not something this project will try to work around.
 - **Blob-only videos with no source URL.** Some players stream via MediaSource with no fetchable URL. The yt-dlp button still handles these if the site is supported.
-- **YouTube breaks downloaders regularly.** When something stops working, update first: `pip install -U yt-dlp`. Once every couple of months is about right.
+- **YouTube breaks downloaders regularly.** The service pulls a fresh yt-dlp every three days while the queue is idle, so this usually sorts itself out. If it doesn't, update by hand: `pip install -U yt-dlp`.
 
 ---
 
@@ -132,6 +132,9 @@ Being straight with you:
 
 **Footer says `Specified native messaging host not found`**
 The bridge isn't installed, or the extension ID changed (moving the folder changes it, since the ID is derived from the path). Re-run `python install_native_host.py` and restart the browser.
+
+**Download dies partway through with `HTTP Error 403: Forbidden`**
+Stale yt-dlp: it picks a YouTube player client whose URLs only serve the first few megabytes. Usually fixes itself (the service updates every three days); by hand it's `pip install -U yt-dlp`. `daemon.log` records how the last check went.
 
 **`Video unavailable`, but the video plays fine in the browser**
 Almost always a stale yt-dlp or a missing JS runtime:
@@ -190,6 +193,7 @@ The key detail: the browser launches native hosts inside its own job object and 
 | `install_native_host.py` | installer: auto-detects extension ID, registers the host |
 | `_locales/` | UI translations (English, Russian) |
 | `tools/make_screenshot.py` | renders the README screenshot from the real popup code |
+| `tools/requeue_failed.py` | puts failed downloads back in the queue from a dump file |
 
 The UI follows your browser language: Russian if that's your locale, English otherwise. PRs adding locales are welcome: copy `_locales/en/messages.json` and translate the values.
 
