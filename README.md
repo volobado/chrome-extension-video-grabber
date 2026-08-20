@@ -18,6 +18,10 @@ Most "video downloaders" fall into two camps: browser extensions that only handl
 - **Actually gets max quality on YouTube.** Modern YouTube ships video and audio as separate encrypted streams. Extensions that pretend otherwise hand you a silent file or a 360p one. Video Grabber delegates to [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, which fetch both streams and mux them: 4K with sound if that's what's on offer.
 - **Works on logged-in videos.** Age-restricted, private, unlisted, subscriber-only. The extension hands your existing session cookies to yt-dlp through the browser's own API, so you don't have to close Chrome or export anything. (More on this below. It's the part every other tool gets wrong.)
 - **Sees what the page is actually loading.** It watches network traffic and the DOM, so it catches videos that never appear as a visible download link, including HLS streams.
+- **Downloads can't be knocked off course.** The popup doesn't do the downloading: a separate local service does. Close the popup, switch tabs, minimise the browser, click somewhere by accident, and the file still lands. Reopen the popup and the same progress is waiting for you.
+- **Whole playlists in one click.** On a playlist page a second button shows up. Every video is queued into its own folder named after the playlist, numbered in order, so nothing gets muddled.
+- **A queue you can see.** Progress, speed and time left for each item. Cancel any of them, retry a failed one with a single button.
+- **You pick the folder.** Not just Downloads: hit "change" and choose anywhere. The path is remembered.
 - **Everything stays local.** No accounts, no servers, no telemetry. The extension talks to a Python script on your own machine and nothing else.
 - **Not just YouTube.** The yt-dlp backend covers ~1800 sites. The direct-file grabber covers most of the rest.
 
@@ -74,11 +78,21 @@ Fully quit and reopen it. Open the popup: the footer should read **`yt-dlp: read
 
 Click the 🎬 icon:
 
+**The "Save to" bar**
+Shows where files land. `change` opens a folder picker, `✎` lets you type a path, `📂` opens the folder. The choice sticks until you change it.
+
 **Top section: "Download this page in best quality"**
-The YouTube path, and the one you'll use most. Press the red button and yt-dlp downloads the page's video, muxes audio in, and drops it in your Downloads folder. The dropdown picks quality: `Max`, `≤1080p`, `≤720p`, `≤480p`, or `Audio only (mp3)`.
+The YouTube path, and the one you'll use most. Press the red button and yt-dlp downloads the page's video, muxes audio in, and drops it in your chosen folder. The dropdown picks quality: `Max`, `≤1080p`, `≤720p`, `≤480p`, or `Audio only (mp3)`.
+
+On a playlist page, **"Whole playlist (own folder)"** appears below it. The extension reads the list, creates a folder named after the playlist, and queues every video in order: `01 - Title.mp4`, `02 - ...`, and so on.
+
+**"Downloads" section**
+The queue: what's downloading, what's waiting, what's finished. `✕` cancels, `↻` retries a failed item into the same folder with the same number. `cancel all` and `clear finished` tidy the list.
 
 **Bottom section: "Found on page"**
 Direct media files spotted on the page. `⬇` saves instantly. Items tagged `HLS`/`DASH` are streams, so their button routes through yt-dlp instead.
+
+**The 🗗 button** in the header opens the same panel as a standalone window. A Chrome popup closes the moment you click elsewhere; this window stays put, which helps when you're downloading a batch. It follows whatever tab is active, so the buttons always apply to what you're looking at.
 
 The badge number on the icon = media found on this tab. Empty list? Hit ▶ Play on the video, then ⟳ in the popup. Some players don't request the video until you start it.
 
@@ -133,6 +147,9 @@ The JS challenge solver didn't run. Confirm `node` or `deno` is on your PATH, an
 **Downloaded file has no sound**
 ffmpeg is missing, so the audio stream never got muxed in. Install it and re-download.
 
+**The download service isn't responding**
+Logs live in `%LOCALAPPDATA%\VideoGrabber\`: `daemon.log` (what the service did) and `host.log` (how the browser reached it). `settings.json` there holds your chosen folder. The service starts on the first download and shuts itself down after half an hour of idling.
+
 ---
 
 ## How it works
@@ -144,15 +161,23 @@ ffmpeg is missing, so the audio stream never got muxed in. Install it and re-dow
                                         │ media list, cookies
                                         ▼
                                 ┌────────────────┐
-                                │    popup.js    │  the UI
+                                │    popup.js    │  UI and queue
                                 └───────┬────────┘
                                         │ native messaging (stdio + JSON)
                                         ▼
                              ┌─────────────────────┐
-                             │ native/yt_dlp_host  │  spawns yt-dlp,
-                             │        .py          │  streams progress back
+                             │ native/yt_dlp_host  │  thin client, lives only
+                             │        .py          │  while the popup is open
+                             └──────────┬──────────┘
+                                        │ TCP on 127.0.0.1 + token
+                                        ▼
+                             ┌─────────────────────┐
+                             │  native/vg_daemon   │  queue, yt-dlp, progress,
+                             │        .py          │  folder picker
                              └─────────────────────┘
 ```
+
+The key detail: the browser launches native hosts inside its own job object and kills the whole process tree the moment the popup's port goes away. yt-dlp used to die with it, which is why downloads broke halfway through with `Native host has exited`. Now a separate service does the work, started through WMI so it never inherits the browser's job and keeps going no matter what happens to the window.
 
 | File | Role |
 |------|------|
@@ -160,7 +185,8 @@ ffmpeg is missing, so the audio stream never got muxed in. Install it and re-dow
 | `background.js` | sniffs media URLs from network traffic; builds the cookie file |
 | `content.js` | scrapes `<video>`/`<source>` elements, watches for SPA changes |
 | `popup.html` / `.css` / `.js` | the interface |
-| `native/yt_dlp_host.py` | native host: receives a URL, runs yt-dlp, reports progress |
+| `native/yt_dlp_host.py` | native host: bridge between the extension and the download service |
+| `native/vg_daemon.py` | download service: queue, yt-dlp, playlists, save folder |
 | `install_native_host.py` | installer: auto-detects extension ID, registers the host |
 | `_locales/` | UI translations (English, Russian) |
 | `tools/make_screenshot.py` | renders the README screenshot from the real popup code |

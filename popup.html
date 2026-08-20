@@ -9,8 +9,24 @@
 <body>
   <header>
     <div class="logo">🎬 Video Grabber</div>
-    <button id="refresh" class="icon-btn" data-i18n-title="refresh">⟳</button>
+    <div class="head-btns">
+      <button id="detach" class="icon-btn" data-i18n-title="detachTitle">🗗</button>
+      <button id="refresh" class="icon-btn" data-i18n-title="refresh">⟳</button>
+    </div>
   </header>
+
+  <!-- Куда сохраняем -->
+  <div class="dirbar">
+    <span class="dir-label" data-i18n="saveTo"></span>
+    <span id="dirPath" class="dir-path" title="">…</span>
+    <button id="pickDir" class="link-btn" data-i18n="change"></button>
+    <button id="typeDir" class="link-btn" data-i18n-title="typePathTitle">✎</button>
+    <button id="openDir" class="link-btn" data-i18n-title="openDirTitle">📂</button>
+  </div>
+  <div id="dirEditRow" class="dir-edit" hidden>
+    <input id="dirInput" type="text" class="dir-input" spellcheck="false" />
+    <button id="dirSave" class="btn small" data-i18n="save"></button>
+  </div>
 
   <!-- Блок 1: лучшее качество через yt-dlp (YouTube и др.) -->
   <section class="best">
@@ -26,10 +42,24 @@
         <option value="audio" data-i18n="qAudio"></option>
       </select>
     </div>
+    <button id="ytdlpPlaylist" class="btn wide" hidden>🗂 <span data-i18n="btnPlaylist"></span></button>
     <div id="ytdlpStatus" class="status"></div>
   </section>
 
-  <!-- Блок 2: прямые медиа со страницы -->
+  <!-- Блок 2: очередь загрузок -->
+  <section class="queue">
+    <div class="direct-head">
+      <span data-i18n="queueTitle"></span>
+      <span>
+        <button id="cancelAll" class="link-btn" data-i18n="cancelAll"></button>
+        <button id="clearDone" class="link-btn" data-i18n="clearDone"></button>
+      </span>
+    </div>
+    <ul id="queueList" class="list"></ul>
+    <div id="queueEmpty" class="empty" data-i18n="queueEmpty"></div>
+  </section>
+
+  <!-- Блок 3: прямые медиа со страницы -->
   <section class="direct">
     <div class="direct-head">
       <span data-i18n="foundOnPage"></span>

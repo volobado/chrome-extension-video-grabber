@@ -46,6 +46,35 @@ const DEMO_MEDIA = [
     size: 38273024, filename: "podcast-ep-42.mp3", source: "network" }
 ];
 
+// Очередь загрузок — такая же по форме, как отдаёт служба.
+const DEMO_TASKS = [
+  { id: 1, kind: "playlist", url: "https://www.youtube.com/playlist?list=PLdemo",
+    title: "Rust in Practice", status: "done", progress: 100, line: "", file: "",
+    message: "14 videos", dir: "D:\\\\Video\\\\YouTube", index: 0, playlist: "Rust in Practice", format: "best" },
+  { id: 2, kind: "video", url: "https://youtu.be/a1", title: "01. Ownership explained",
+    status: "running", progress: 47, line: "47.0% of 812.40MiB · 9.71MiB/s · ETA 00:44",
+    file: "01 - Ownership explained.mp4", message: "", dir: "D:\\\\Video\\\\YouTube\\\\Rust in Practice",
+    index: 1, playlist: "Rust in Practice", format: "best" },
+  { id: 3, kind: "video", url: "https://youtu.be/a2", title: "02. Borrow checker",
+    status: "queued", progress: 0, line: "", file: "", message: "",
+    dir: "D:\\\\Video\\\\YouTube\\\\Rust in Practice", index: 2, playlist: "Rust in Practice", format: "best" },
+  { id: 4, kind: "video", url: "https://youtu.be/a3", title: "Keynote 2026",
+    status: "done", progress: 100, line: "", file: "Keynote 2026.mp4", message: "Keynote 2026.mp4",
+    dir: "D:\\\\Video\\\\YouTube", index: 0, playlist: "", format: "1080" }
+];
+
+function demoRespond(msg) {
+  if (msg.cmd === "status") {
+    return {
+      ok: true,
+      tasks: DEMO_TASKS,
+      settings: { dir: "D:\\\\Video\\\\YouTube" },
+      tools: { ytdlp: true, ffmpeg: true, js: "node" }
+    };
+  }
+  return { ok: true };
+}
+
 window.chrome = {
   i18n: {
     getMessage: (key, args) => {
@@ -53,28 +82,38 @@ window.chrome = {
       if (!entry) return "";
       let msg = entry.message;
       if (args && args.length) {
-        // Подставляем плейсхолдеры вида $FILE$ / $ERR$ / $MSG$.
+        // Подставляем плейсхолдеры вида $COUNT$ / $ERR$ / $MSG$.
         msg = msg.replace(/\\$[A-Z]+\\$/g, () => args.shift() ?? "");
       }
       return msg;
     }
   },
   tabs: {
-    query: async () => ([{ id: 1, url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ" }])
+    query: async () => ([{ id: 1, title: "Rust in Practice",
+      url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ&list=PLdemo" }])
   },
+  windows: { create: async () => ({}) },
   runtime: {
+    getURL: (p) => p,
     sendMessage: async (msg) => {
       if (msg.type === "GET_MEDIA") return { media: DEMO_MEDIA };
       if (msg.type === "GET_COOKIES") return { cookies: "" };
       return { ok: true };
     },
-    connectNative: () => ({
-      onMessage: { addListener: (fn) => { window.__pong = fn; } },
-      onDisconnect: { addListener: () => {} },
-      postMessage: () => { setTimeout(() => window.__pong &&
-        window.__pong({ status: "pong" }), 30); },
-      disconnect: () => {}
-    }),
+    connectNative: () => {
+      const listeners = [];
+      return {
+        onMessage: { addListener: (fn) => listeners.push(fn) },
+        onDisconnect: { addListener: () => {} },
+        postMessage: (msg) => {
+          setTimeout(() => {
+            const resp = demoRespond(msg);
+            listeners.forEach((fn) => fn(resp));
+          }, 20);
+        },
+        disconnect: () => {}
+      };
+    },
     lastError: null
   }
 };
@@ -125,7 +164,7 @@ def main():
         "--disable-gpu",
         "--hide-scrollbars",
         "--force-device-scale-factor=2",
-        "--window-size=360,466",
+        "--window-size=360,830",
         f"--screenshot={OUT}",
         "--virtual-time-budget=3000",
         f"file:///{demo.as_posix()}",

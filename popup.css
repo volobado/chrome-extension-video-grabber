@@ -11,6 +11,8 @@ header {
   padding: 10px 12px; background: #171a21; border-bottom: 1px solid #23272f;
 }
 .logo { font-weight: 600; font-size: 14px; }
+.head-btns { display: flex; gap: 6px; }
+body.detached { width: auto; }
 .icon-btn {
   background: #23272f; border: none; color: #e6e8ec; width: 28px; height: 28px;
   border-radius: 6px; cursor: pointer; font-size: 15px;
@@ -35,6 +37,35 @@ section { padding: 12px; border-bottom: 1px solid #1c1f26; }
   background: #23272f; color: #e6e8ec; border: 1px solid #2c313b;
   border-radius: 8px; padding: 0 8px; cursor: pointer;
 }
+.btn.wide { background: #23272f; width: 100%; margin-top: 8px; }
+.btn.wide:hover { background: #2c313b; }
+
+.dirbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; background: #13161c; border-bottom: 1px solid #1c1f26; font-size: 11px;
+}
+.dir-label { color: #6b7280; white-space: nowrap; }
+.dir-path {
+  flex: 1; min-width: 0; color: #a9b1bf; direction: rtl; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dir-edit { display: flex; gap: 6px; padding: 0 12px 8px; background: #13161c; }
+.dir-edit[hidden] { display: none; }
+.dir-input {
+  flex: 1; background: #0f1115; border: 1px solid #2c313b; border-radius: 6px;
+  color: #e6e8ec; padding: 5px 7px; font-size: 11px;
+}
+
+.bar { height: 4px; background: #23272f; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.bar .fill { height: 100%; background: #2563eb; border-radius: 3px; transition: width .3s ease; }
+
+.item.task { align-items: flex-start; }
+.item.task .task-btn { font-size: 13px; padding: 0 2px; }
+.item.task.done .name { color: #9aa3b1; }
+.item.task.error .info { color: #f87171; }
+.item.task.canceled .name { color: #6b7280; text-decoration: line-through; }
+.item.task.running { border-color: #2f4a7a; }
+
 .status { font-size: 11px; margin-top: 8px; min-height: 14px; color: #8b93a1; }
 .status.ok { color: #34d399; }
 .status.err { color: #f87171; }
@@ -46,6 +77,10 @@ section { padding: 12px; border-bottom: 1px solid #1c1f26; }
   margin-bottom: 8px;
 }
 .link-btn { background: none; border: none; color: #6b7280; cursor: pointer; font-size: 11px; }
+.direct-head .link-btn + .link-btn { margin-left: 10px; }
+.direct-head .link-btn + .link-btn::before {
+  content: "·"; color: #3a4150; margin-right: 10px;
+}
 .link-btn:hover { color: #e6e8ec; }
 
 .list { list-style: none; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
