@@ -35,6 +35,22 @@ function filenameFromUrl(url) {
   }
 }
 
+// Имя, подсказанное экстрактором (название фильма + качество), приводим к виду,
+// который примет chrome.downloads: без запрещённых в Windows символов и с расширением.
+function namedFile(name, url, kind) {
+  const base = String(name)
+    .replace(/[\\/:*?"<>|\x00-\x1f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "")
+    .slice(0, 150);
+  if (!base) return filenameFromUrl(url);
+  // Потоки качает yt-dlp, для них имя — только подпись в списке.
+  if (kind === "hls" || kind === "dash") return base;
+  const ext = (filenameFromUrl(url).match(/\.[a-z0-9]{2,4}$/i) || [".mp4"])[0];
+  return base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+}
+
 function addMedia(tabId, url, contentType, sizeHeader) {
   if (!tabId || tabId < 0) return;
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return;
@@ -192,7 +208,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (tabId) {
       const store = getTabStore(tabId);
       for (const item of msg.items || []) {
-        if (!item.url || store.has(item.url)) continue;
+        if (!item.url) continue;
+        const known = store.get(item.url);
+        if (known) {
+          // Ссылку уже поймали в сети, но экстрактор знает про неё больше: имя и качество.
+          if (item.extracted && known.source !== "extractor") {
+            known.source = "extractor";
+            known.quality = Number(item.quality) || 0;
+            if (item.filename) known.filename = namedFile(item.filename, item.url, item.kind);
+          }
+          continue;
+        }
         if (item.url.startsWith("blob:")) {
           // blob нельзя скачать напрямую — пометим, но покажем.
         }
@@ -201,8 +227,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           kind: item.kind || "video",
           contentType: "",
           size: 0,
-          filename: filenameFromUrl(item.url),
-          source: "page",
+          filename: item.filename ? namedFile(item.filename, item.url, item.kind) : filenameFromUrl(item.url),
+          // "extractor" — ссылка вынута из конфига плеера (page_extractor.js).
+          source: item.extracted ? "extractor" : "page",
+          quality: Number(item.quality) || 0,
           poster: item.poster || "",
         });
       }

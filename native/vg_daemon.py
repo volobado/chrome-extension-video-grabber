@@ -234,6 +234,7 @@ class Manager:
                 "dir": self.settings["dir"],
                 "index": 0,
                 "playlist": "",
+                "name": "",           # готовое имя файла без расширения (у потоков с плеера)
                 "cookie_file": "",
                 "added": time.time(),
             }
@@ -289,6 +290,9 @@ class Manager:
                 dir=target,
                 index=index,
                 playlist=req.get("playlist_title", ""),
+                # У потока с плеера yt-dlp знает только имя вида "manifest", поэтому
+                # имя файла приходит от расширения.
+                name=sanitize_folder(req.get("filename", "")) if req.get("filename") else "",
                 cookie_file=cookie_file,
             )
         log(f"enqueue #{t['id']} {t['kind']} {t['url']}")
@@ -607,10 +611,11 @@ class Manager:
     # --- загрузка ---
 
     def build_args(self, task):
+        title_tpl = esc_tpl(task["name"]) if task.get("name") else "%(title)s"
         if task["index"]:
-            name_tpl = f"{task['index']:03d} - %(title)s.%(ext)s"
+            name_tpl = f"{task['index']:03d} - {title_tpl}.%(ext)s"
         else:
-            name_tpl = "%(title)s.%(ext)s"
+            name_tpl = f"{title_tpl}.%(ext)s"
         out_tpl = esc_tpl(task["dir"]) + os.sep + name_tpl
 
         args = [

@@ -24,6 +24,7 @@ Most "video downloaders" fall into two camps: browser extensions that only handl
 - **You pick the folder.** Not just Downloads: hit "change" and choose anywhere. The path is remembered.
 - **Everything stays local.** No accounts, no servers, no telemetry. The extension talks to a Python script on your own machine and nothing else.
 - **Not just YouTube.** The yt-dlp backend covers ~1800 sites. The direct-file grabber covers most of the rest.
+- **Reads custom players yt-dlp doesn't know.** A page-side extractor pulls every quality straight out of the player config, without pressing play, and names the files after the title and quality. First up: HDRezka, including episode and dub switches on series.
 
 **Bonus:** pick "Audio only" and you get an MP3. Handy for talks, interviews, and podcasts you'd rather listen to than watch.
 

@@ -47,6 +47,7 @@
 
   "fromNetwork":        { "message": "из сети" },
   "fromPlayer":         { "message": "из плеера" },
+  "noPlayerStreams":    { "message": "Ссылки плеера пока не найдены. Обнови страницу (F5) и открой окно ещё раз." },
   "downloadFile":       { "message": "Скачать файл" },
   "downloadStream":     { "message": "Скачать этот поток через yt-dlp" },
 

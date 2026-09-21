@@ -47,6 +47,7 @@
 
   "fromNetwork":        { "message": "from network" },
   "fromPlayer":         { "message": "from player" },
+  "noPlayerStreams":    { "message": "No player links found yet. Reload the page (F5) and open this window again." },
   "downloadFile":       { "message": "Download file" },
   "downloadStream":     { "message": "Download this stream via yt-dlp" },
 

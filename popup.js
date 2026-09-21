@@ -118,6 +118,10 @@ async function loadMedia() {
 
   if (!currentTab) { empty.style.display = "block"; return; }
 
+  // Просим страницу дослать ссылки плеера: воркер мог уснуть и забыть их.
+  // На страницах без content-скрипта (chrome://) запрос падает — это нормально.
+  await chrome.tabs.sendMessage(currentTab.id, { type: "VG_RESEND" }, { frameId: 0 }).catch(() => {});
+
   const resp = await chrome.runtime.sendMessage({ type: "GET_MEDIA", tabId: currentTab.id });
   const media = (resp && resp.media) || [];
   media.sort((a, b) => (b.size || 0) - (a.size || 0));
@@ -144,7 +148,7 @@ async function loadMedia() {
     name.title = item.url;
     const info = document.createElement("div");
     info.className = "info";
-    info.textContent = [humanSize(item.size), t(item.source === "page" ? "fromPlayer" : "fromNetwork")]
+    info.textContent = [humanSize(item.size), t(item.source === "network" ? "fromNetwork" : "fromPlayer")]
       .filter(Boolean).join(" · ");
     meta.append(name, info);
 
@@ -154,7 +158,10 @@ async function loadMedia() {
     if (item.kind === "hls" || item.kind === "dash") {
       btn.textContent = "yt-dlp";
       btn.title = t("downloadStream");
-      btn.onclick = () => enqueue(item.url, document.getElementById("ytdlpFormat").value, false, item.filename);
+      btn.onclick = () => enqueue(
+        item.url, document.getElementById("ytdlpFormat").value, false, item.filename,
+        item.source === "extractor" ? item.filename : ""
+      );
     } else {
       btn.textContent = "⬇";
       btn.title = t("downloadFile");
@@ -169,9 +176,24 @@ async function loadMedia() {
   }
 }
 
+// Лучшая ссылка из конфига плеера с учётом выбранного потолка качества.
+// Прямой mp4 надёжнее потока из кусочков, поэтому при равном качестве берём его.
+async function bestExtracted(format) {
+  await chrome.tabs.sendMessage(currentTab.id, { type: "VG_RESEND" }, { frameId: 0 }).catch(() => {});
+  const resp = await chrome.runtime.sendMessage({ type: "GET_MEDIA", tabId: currentTab.id });
+  const found = ((resp && resp.media) || []).filter((m) => m.source === "extractor");
+  if (!found.length) return null;
+  const cap = { 1080: 10800, 720: 7200, 480: 4800 }[format];
+  const fits = cap ? found.filter((m) => m.quality <= cap + 5) : [];
+  const pool = fits.length ? fits : found;
+  pool.sort((a, b) => (b.quality - a.quality) || ((a.kind === "video" ? 0 : 1) - (b.kind === "video" ? 0 : 1)));
+  return pool[0];
+}
+
 // ---------- очередь загрузок ----------
 
-async function enqueue(url, format, asPlaylist, title) {
+// filename — готовое имя файла; без него служба берёт название, которое найдёт yt-dlp.
+async function enqueue(url, format, asPlaylist, title, filename) {
   setStatus(t("statusStarting"), "work");
 
   // Куки нужны для роликов с ограничением по возрасту, приватных и по подписке.
@@ -191,6 +213,7 @@ async function enqueue(url, format, asPlaylist, title) {
       cookies,
       playlist: !!asPlaylist,
       title: title || (currentTab && currentTab.title) || url,
+      filename: filename || "",
     });
     if (resp && resp.ok) {
       setStatus(asPlaylist ? t("statusPlaylistQueued") : t("statusQueued"), "ok");
@@ -282,6 +305,7 @@ function renderQueue(tasks) {
           dir: task.dir,
           index: task.index,
           playlist_title: task.playlist,
+          filename: task.name || "",
         }).catch(() => {});
         refreshQueue();
       };
@@ -406,9 +430,18 @@ async function init() {
   currentTab = await resolveTab();
   showSource(currentTab);
 
-  document.getElementById("ytdlpBest").onclick = () => {
+  document.getElementById("ytdlpBest").onclick = async () => {
     if (!currentTab) return;
-    enqueue(currentTab.url, document.getElementById("ytdlpFormat").value, false);
+    const format = document.getElementById("ytdlpFormat").value;
+    // Сайты вроде HDRezka yt-dlp не знает: ему нужна ссылка из плеера, а не адрес страницы.
+    const best = await bestExtracted(format);
+    if (best) {
+      enqueue(best.url, format, false, best.filename, best.filename);
+    } else if (/rezka/i.test(currentTab.url || "")) {
+      setStatus(t("noPlayerStreams"), "err");
+    } else {
+      enqueue(currentTab.url, format, false);
+    }
   };
   document.getElementById("ytdlpPlaylist").onclick = () => {
     if (!currentTab) return;

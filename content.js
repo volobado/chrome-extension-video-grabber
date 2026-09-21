@@ -48,3 +48,37 @@ const observer = new MutationObserver(() => {
   window.__vgTimer = setTimeout(collectFromPage, 800);
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
+
+// Ссылки от page_extractor.js (MAIN-мир). Написать такое сообщение может любой
+// скрипт страницы, поэтому пропускаем только http(s)-ссылки и известные виды.
+window.addEventListener("message", (event) => {
+  if (event.source !== window || !event.data || event.data.type !== "VG_EXTRACTED_STREAMS") return;
+  if (!Array.isArray(event.data.items)) return;
+  const items = event.data.items
+    .filter((it) => it && typeof it.url === "string" && /^https?:\/\//i.test(it.url))
+    .map((it) => ({
+      url: it.url,
+      kind: ["video", "audio", "hls", "dash"].includes(it.kind) ? it.kind : "video",
+      filename: typeof it.filename === "string" ? it.filename.slice(0, 200) : "",
+      quality: Number(it.quality) || 0,
+      extracted: true,
+    }));
+  if (!items.length) return;
+  for (const it of items) extracted.set(it.url, it);
+  chrome.runtime.sendMessage({ type: "ADD_FROM_PAGE", items });
+});
+
+// Фоновый воркер Chrome усыпляет, и собранное в его памяти пропадает, а экстрактор
+// шлёт ссылки один раз. Поэтому помним их здесь и досылаем, когда открывают окно.
+const extracted = new Map();
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== "VG_RESEND" || window !== window.top) return;
+  if (!extracted.size) {
+    sendResponse({ ok: true });
+    return;
+  }
+  chrome.runtime
+    .sendMessage({ type: "ADD_FROM_PAGE", items: Array.from(extracted.values()) })
+    .finally(() => sendResponse({ ok: true }));
+  return true;
+});
