@@ -61,32 +61,69 @@
   const args = call ? call[2].split(",").map((a) => a.trim().replace(/^'|'$/g, "")) : [];
   const isSeries = !!call && call[1] === "Series";
   const postId = args[0] || "";
-  const initialTranslator = args[1] || "";
-
   // --- Озвучки ---
   // Сайт помнит последнюю выбранную озвучку и в разметку кладёт ссылки именно на неё.
   // Поэтому список озвучек отдаём попапу: там выбирают нужную, по умолчанию первую.
+  //
+  // Номер озвучки не уникален: «Дубляж» и «Дубляж (Реж. версия)» — одна студия с одним
+  // translator_id, различаются только признаком режиссёрской версии (так же экранка
+  // и версия с рекламой). Поэтому ключ озвучки — номер вместе с этими признаками.
+  const flag = (v) => (v === "1" || v === "true" || v === 1 || v === true ? "1" : "0");
+  const dubKey = (id, camrip, ads, director) => `${id}|${flag(camrip)}${flag(ads)}${flag(director)}`;
+
   function readTranslators() {
     return [...document.querySelectorAll(".b-translator__item")]
-      .map((li) => ({
-        id: li.dataset.translator_id || "",
-        name: (li.getAttribute("title") || li.textContent || "").trim(),
-        camrip: li.dataset.camrip || "0",
-        ads: li.dataset.ads || "0",
-        director: li.dataset.director || "0",
-      }))
+      .map((li) => {
+        const tr = {
+          id: li.dataset.translator_id || "",
+          name: (li.getAttribute("title") || li.textContent || "").trim(),
+          camrip: flag(li.dataset.camrip),
+          ads: flag(li.dataset.ads),
+          director: flag(li.dataset.director),
+        };
+        tr.key = dubKey(tr.id, tr.camrip, tr.ads, tr.director);
+        return tr;
+      })
       .filter((x) => x.id);
   }
   const translators = readTranslators();
 
-  function dubName(id) {
-    const tr = translators.find((x) => x.id === String(id));
+  // Одинаковые названия («Дубляж» и «Дубляж» с пометкой режиссёрской версии рядом)
+  // различаем по признакам, иначе в списке и в имени файла их не отличить.
+  for (const tr of translators) {
+    const twins = translators.filter((x) => x.name.toLowerCase() === tr.name.toLowerCase());
+    if (twins.length < 2) continue;
+    const marks = [];
+    if (tr.director === "1" && !/реж/i.test(tr.name)) marks.push("Реж. версия");
+    if (tr.camrip === "1" && !/cam/i.test(tr.name)) marks.push("CAMRip");
+    if (tr.ads === "1" && !/реклам/i.test(tr.name)) marks.push("с рекламой");
+    tr.display = marks.length ? `${tr.name} (${marks.join(", ")})` : tr.name;
+  }
+  for (const tr of translators) tr.name = tr.display || tr.name;
+
+  // Ключ по номеру и признакам. У сериала признаков в запросе нет, тогда берём
+  // первую озвучку списка с этим номером.
+  function keyFor(id, camrip, ads, director) {
+    id = String(id || "");
+    if (camrip !== undefined || ads !== undefined || director !== undefined) {
+      const exact = dubKey(id, camrip, ads, director);
+      if (!translators.length || translators.some((x) => x.key === exact)) return exact;
+    }
+    const byId = translators.find((x) => x.id === id);
+    return byId ? byId.key : dubKey(id, 0, 0, 0);
+  }
+
+  // Фильм: initCDNMoviesEvents(id, translator, camrip, ads, director, ...).
+  const initialKey = isSeries ? keyFor(args[1]) : keyFor(args[1], args[2], args[3], args[4]);
+
+  function dubName(key) {
+    const tr = translators.find((x) => x.key === key);
     return tr ? tr.name : "";
   }
 
   // Имя озвучки попадает в имя файла, только когда их на выбор несколько.
-  function label(translatorId, season, episode) {
-    const dub = translators.length > 1 ? dubName(translatorId) : "";
+  function label(key, season, episode) {
+    const dub = translators.length > 1 ? dubName(key) : "";
     return pageTitle() + episodeTag(season, episode) + (dub ? ` [${dub}]` : "");
   }
 
@@ -121,7 +158,7 @@
     const sm = html.slice(call.index).match(/"streams"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (!sm) return [];
     const season = isSeries ? args[2] : "", episode = isSeries ? args[3] : "";
-    return parseStreams(decodeStreams(JSON.parse(`"${sm[1]}"`)), label(initialTranslator, season, episode), initialTranslator);
+    return parseStreams(decodeStreams(JSON.parse(`"${sm[1]}"`)), label(initialKey, season, episode), initialKey);
   }
 
   // Серия, открытая сейчас: активный пункт списка серий, иначе та, с которой открылась страница.
@@ -134,8 +171,12 @@
   }
 
   // Ссылки на другую озвучку — тем же запросом, которым их берёт сам плеер.
-  async function fetchDub(translatorId) {
-    const tr = translators.find((x) => x.id === String(translatorId)) || { id: String(translatorId) };
+  async function fetchDub(key) {
+    const tr = translators.find((x) => x.key === String(key));
+    if (!tr) {
+      window.postMessage({ type: "VG_DUB_FAILED", translator: String(key), message: "нет такой озвучки" }, "*");
+      return;
+    }
     const favs = document.getElementById("ctrl_favs");
     const body = new URLSearchParams({ id: postId, translator_id: tr.id, favs: favs ? favs.value : "" });
     let ep = null;
@@ -146,11 +187,12 @@
       body.set("episode", ep.episode);
       body.set("action", "get_stream");
     } else {
-      body.set("is_camrip", tr.camrip || "0");
-      body.set("is_ads", tr.ads || "0");
-      body.set("is_director", tr.director || "0");
       body.set("action", "get_movie");
     }
+    // Признаки версии шлём всегда: у сериала сайт их просто пропустит, если не знает.
+    body.set("is_camrip", tr.camrip);
+    body.set("is_ads", tr.ads);
+    body.set("is_director", tr.director);
     const resp = await fetch(`/ajax/get_cdn_series/?t=${Date.now()}`, {
       method: "POST",
       body,
@@ -159,10 +201,10 @@
     });
     const data = await resp.json();
     if (!data || !data.success || !data.url) {
-      window.postMessage({ type: "VG_DUB_FAILED", translator: tr.id, message: (data && data.message) || "" }, "*");
+      window.postMessage({ type: "VG_DUB_FAILED", translator: tr.key, message: (data && data.message) || "" }, "*");
       return;
     }
-    send(parseStreams(decodeStreams(data.url), label(tr.id, ep && ep.season, ep && ep.episode), tr.id));
+    send(parseStreams(decodeStreams(data.url), label(tr.key, ep && ep.season, ep && ep.episode), tr.key));
   }
 
   // Попап просит ссылки на выбранную озвучку (через content.js).
@@ -193,8 +235,12 @@
         try {
           const data = JSON.parse(this.responseText);
           if (!data || !data.success || !data.url) return;
-          const tr = params.get("translator_id") || initialTranslator;
-          send(parseStreams(decodeStreams(data.url), label(tr, params.get("season"), params.get("episode")), tr));
+          const id = params.get("translator_id");
+          const key = !id ? initialKey
+            : params.has("is_director") || params.has("is_camrip") || params.has("is_ads")
+              ? keyFor(id, params.get("is_camrip"), params.get("is_ads"), params.get("is_director"))
+              : keyFor(id);
+          send(parseStreams(decodeStreams(data.url), label(key, params.get("season"), params.get("episode")), key));
         } catch (e) {
           /* не JSON или чужой формат — пропускаем */
         }
@@ -204,8 +250,9 @@
   };
 
   meta = {
-    translators: translators.map(({ id, name }) => ({ id, name })),
-    current: initialTranslator,
+    // Попап видит только ключи: по ним он и просит ссылки.
+    translators: translators.map(({ key, name }) => ({ id: key, name })),
+    current: initialKey,
     series: isSeries,
   };
   sendMeta();

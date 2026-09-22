@@ -234,7 +234,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const known = store.get(item.url);
         if (known) {
           // Ссылку уже поймали в сети, но экстрактор знает про неё больше: имя и качество.
-          if (item.extracted && known.source !== "extractor") {
+          // Та же ссылка у другой озвучки (две версии с одним файлом) — переподписываем на
+          // последнюю запрошенную: попап ждёт ссылки именно на неё.
+          if (item.extracted) {
             known.source = "extractor";
             known.quality = Number(item.quality) || 0;
             known.translator = item.translator || "";
