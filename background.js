@@ -3,6 +3,8 @@
 
 // tabId -> Map(url -> mediaInfo). Держим в памяти воркера.
 const mediaByTab = new Map();
+// tabId -> { translators, current, series, dubError } — озвучки со страницы плеера.
+const metaByTab = new Map();
 
 // Типы контента и расширения, которые считаем видео/аудио.
 const MEDIA_EXT = /\.(mp4|m4v|webm|ogv|mov|mkv|avi|flv|m3u8|mpd|ts|mp3|m4a|aac|ogg|wav|flac)(\?|#|$)/i;
@@ -117,12 +119,14 @@ chrome.webNavigation?.onCommitted?.addListener?.(() => {});
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading" && changeInfo.url) {
     mediaByTab.delete(tabId);
+    metaByTab.delete(tabId);
     updateBadge(tabId);
   }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   mediaByTab.delete(tabId);
+  metaByTab.delete(tabId);
 });
 
 // --- Куки для yt-dlp ---
@@ -198,7 +202,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const tabId = msg.tabId;
     const store = mediaByTab.get(tabId);
     const list = store ? Array.from(store.values()) : [];
-    sendResponse({ media: list });
+    sendResponse({ media: list, meta: metaByTab.get(tabId) || null });
+    return true;
+  }
+
+  if (msg.type === "SET_PAGE_META") {
+    const tabId = sender.tab?.id;
+    if (tabId) {
+      const old = metaByTab.get(tabId);
+      metaByTab.set(tabId, { ...msg.meta, dubError: old ? old.dubError : null });
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === "DUB_FAILED") {
+    // Для этой озвучки сайт ссылок не дал (например, у неё нет открытой серии).
+    const meta = metaByTab.get(sender.tab?.id);
+    if (meta) meta.dubError = { translator: msg.translator, message: msg.message, at: Date.now() };
+    sendResponse({ ok: true });
     return true;
   }
 
@@ -215,6 +237,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (item.extracted && known.source !== "extractor") {
             known.source = "extractor";
             known.quality = Number(item.quality) || 0;
+            known.translator = item.translator || "";
             if (item.filename) known.filename = namedFile(item.filename, item.url, item.kind);
           }
           continue;
@@ -231,6 +254,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // "extractor" — ссылка вынута из конфига плеера (page_extractor.js).
           source: item.extracted ? "extractor" : "page",
           quality: Number(item.quality) || 0,
+          translator: item.translator || "",
           poster: item.poster || "",
         });
       }

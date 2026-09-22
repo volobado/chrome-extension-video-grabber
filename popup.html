@@ -10,6 +10,7 @@
   <header>
     <div class="logo">🎬 Video Grabber</div>
     <div class="head-btns">
+      <button id="dashboard" class="icon-btn" data-i18n-title="dashOpenTitle">📊</button>
       <button id="detach" class="icon-btn" data-i18n-title="detachTitle">🗗</button>
       <button id="refresh" class="icon-btn" data-i18n-title="refresh">⟳</button>
     </div>
@@ -32,6 +33,10 @@
   <section class="best">
     <div class="best-title" data-i18n="bestTitle"></div>
     <div class="best-sub" id="pageHost">…</div>
+    <div class="dub-row" id="dubRow" hidden>
+      <span data-i18n="dubLabel"></span>
+      <select id="dubSelect" class="sel dub-sel" data-i18n-title="dubTitle"></select>
+    </div>
     <div class="best-row">
       <button id="ytdlpBest" class="btn primary">⬇ <span data-i18n="btnBest"></span></button>
       <select id="ytdlpFormat" class="sel" data-i18n-title="qualityTitle">
@@ -51,6 +56,7 @@
     <div class="direct-head">
       <span data-i18n="queueTitle"></span>
       <span>
+        <button id="dashboardLink" class="link-btn" data-i18n="dashOpen"></button>
         <button id="cancelAll" class="link-btn" data-i18n="cancelAll"></button>
         <button id="clearDone" class="link-btn" data-i18n="clearDone"></button>
       </span>
@@ -73,6 +79,7 @@
     <span id="hostState" class="host-state" data-i18n="hostChecking"></span>
   </footer>
 
+  <script src="host.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

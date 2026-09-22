@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="icons/icon48.png" />
+  <link rel="stylesheet" href="dashboard.css" />
+  <title>Video Grabber</title>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand">
+        <img src="icons/icon48.png" alt="" />
+        <div>
+          <div class="brand-name">Video Grabber</div>
+          <div class="brand-sub" data-i18n="dashTitle"></div>
+        </div>
+      </div>
+      <input id="search" class="search" type="search" spellcheck="false" data-i18n-placeholder="dashSearch" />
+      <div class="host">
+        <span id="hostDot" class="dot"></span>
+        <span id="hostState" data-i18n="hostChecking"></span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Сводка: она же фильтр -->
+    <section class="stats" id="stats">
+      <button class="stat" data-filter="running">
+        <span class="stat-num" id="nRunning">0</span>
+        <span class="stat-label" data-i18n="fRunning"></span>
+        <span class="stat-sub" id="parallelInfo"></span>
+      </button>
+      <button class="stat" data-filter="queued">
+        <span class="stat-num" id="nQueued">0</span>
+        <span class="stat-label" data-i18n="fQueued"></span>
+      </button>
+      <button class="stat ok" data-filter="done">
+        <span class="stat-num" id="nDone">0</span>
+        <span class="stat-label" data-i18n="fDone"></span>
+      </button>
+      <button class="stat bad" data-filter="error">
+        <span class="stat-num" id="nError">0</span>
+        <span class="stat-label" data-i18n="fError"></span>
+      </button>
+      <button class="stat muted" data-filter="canceled">
+        <span class="stat-num" id="nCanceled">0</span>
+        <span class="stat-label" data-i18n="fCanceled"></span>
+      </button>
+    </section>
+
+    <!-- Общий прогресс -->
+    <section class="overall">
+      <div class="overall-row">
+        <span id="overallText"></span>
+        <span id="speedText" class="overall-speed"></span>
+      </div>
+      <div class="bar big"><div class="fill" id="overallFill"></div></div>
+    </section>
+
+    <div id="errBanner" class="banner" hidden>
+      <span id="errBannerText"></span>
+      <button id="retryFailed2" class="btn" data-i18n="retryFailed"></button>
+    </div>
+
+    <!-- Панель: фильтры и действия -->
+    <section class="toolbar">
+      <div class="chips" id="chips">
+        <button class="chip active" data-filter="all" data-i18n="fAll"></button>
+        <button class="chip" data-filter="running" data-i18n="fRunning"></button>
+        <button class="chip" data-filter="queued" data-i18n="fQueued"></button>
+        <button class="chip" data-filter="done" data-i18n="fDone"></button>
+        <button class="chip" data-filter="error" data-i18n="fError"></button>
+        <button class="chip" data-filter="canceled" data-i18n="fCanceled"></button>
+      </div>
+      <div class="actions">
+        <button id="openDir" class="link" data-i18n-title="openDirTitle">📂 <span id="dirPath"></span></button>
+        <button id="retryFailed" class="link" data-i18n="retryFailed"></button>
+        <button id="cancelAll" class="link" data-i18n="cancelAll"></button>
+        <button id="clearDone" class="link" data-i18n="clearDone"></button>
+      </div>
+    </section>
+
+    <div id="list" class="list"></div>
+    <div id="empty" class="empty" hidden></div>
+  </main>
+
+  <script src="host.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

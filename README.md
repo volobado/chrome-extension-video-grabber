@@ -21,6 +21,8 @@ Most "video downloaders" fall into two camps: browser extensions that only handl
 - **Downloads can't be knocked off course.** The popup doesn't do the downloading: a separate local service does. Close the popup, switch tabs, minimise the browser, click somewhere by accident, and the file still lands. Reopen the popup and the same progress is waiting for you.
 - **Whole playlists in one click.** On a playlist page a second button shows up. Every video is queued into its own folder named after the playlist, numbered in order, so nothing gets muddled.
 - **A queue you can see.** Progress, speed and time left for each item. Cancel any of them, retry a failed one with a single button.
+- **Five at a time, the rest wait their turn.** Throw fifty videos at it: five download in parallel, and as soon as one finishes the next one in line takes its place.
+- **A downloads page, like Chrome's own.** The 📊 button opens a tab with everything that's downloading, queued, done or failed, grouped by day, with search and filters. Every failure keeps its reason and the last lines of the yt-dlp log, so you can see what broke. The history survives restarts.
 - **You pick the folder.** Not just Downloads: hit "change" and choose anywhere. The path is remembered.
 - **Everything stays local.** No accounts, no servers, no telemetry. The extension talks to a Python script on your own machine and nothing else.
 - **Not just YouTube.** The yt-dlp backend covers ~1800 sites. The direct-file grabber covers most of the rest.

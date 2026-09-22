@@ -49,36 +49,70 @@ const observer = new MutationObserver(() => {
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
 
-// Ссылки от page_extractor.js (MAIN-мир). Написать такое сообщение может любой
-// скрипт страницы, поэтому пропускаем только http(s)-ссылки и известные виды.
-window.addEventListener("message", (event) => {
-  if (event.source !== window || !event.data || event.data.type !== "VG_EXTRACTED_STREAMS") return;
-  if (!Array.isArray(event.data.items)) return;
-  const items = event.data.items
-    .filter((it) => it && typeof it.url === "string" && /^https?:\/\//i.test(it.url))
-    .map((it) => ({
-      url: it.url,
-      kind: ["video", "audio", "hls", "dash"].includes(it.kind) ? it.kind : "video",
-      filename: typeof it.filename === "string" ? it.filename.slice(0, 200) : "",
-      quality: Number(it.quality) || 0,
-      extracted: true,
-    }));
-  if (!items.length) return;
-  for (const it of items) extracted.set(it.url, it);
-  chrome.runtime.sendMessage({ type: "ADD_FROM_PAGE", items });
-});
+// ---------- мост к page_extractor.js (MAIN-мир) ----------
+// Писать в window может любой скрипт страницы, поэтому из сообщений берём
+// только http(s)-ссылки, известные виды и строки ограниченной длины.
+
+const str = (v, max) => (typeof v === "string" || typeof v === "number" ? String(v).slice(0, max) : "");
 
 // Фоновый воркер Chrome усыпляет, и собранное в его памяти пропадает, а экстрактор
 // шлёт ссылки один раз. Поэтому помним их здесь и досылаем, когда открывают окно.
 const extracted = new Map();
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type !== "VG_RESEND" || window !== window.top) return;
-  if (!extracted.size) {
-    sendResponse({ ok: true });
-    return;
+let pageMeta = null;
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window || !event.data) return;
+  const data = event.data;
+
+  if (data.type === "VG_EXTRACTED_STREAMS" && Array.isArray(data.items)) {
+    const items = data.items
+      .filter((it) => it && typeof it.url === "string" && /^https?:\/\//i.test(it.url))
+      .map((it) => ({
+        url: it.url,
+        kind: ["video", "audio", "hls", "dash"].includes(it.kind) ? it.kind : "video",
+        filename: str(it.filename, 200),
+        quality: Number(it.quality) || 0,
+        translator: str(it.translator, 20),
+        extracted: true,
+      }));
+    if (!items.length) return;
+    for (const it of items) extracted.set(it.url, it);
+    chrome.runtime.sendMessage({ type: "ADD_FROM_PAGE", items });
   }
-  chrome.runtime
-    .sendMessage({ type: "ADD_FROM_PAGE", items: Array.from(extracted.values()) })
-    .finally(() => sendResponse({ ok: true }));
-  return true;
+
+  // Список озвучек со страницы: попап показывает его для выбора.
+  if (data.type === "VG_PAGE_META" && data.meta && Array.isArray(data.meta.translators)) {
+    pageMeta = {
+      translators: data.meta.translators.slice(0, 100).map((x) => ({ id: str(x.id, 20), name: str(x.name, 120) })),
+      current: str(data.meta.current, 20),
+      series: !!data.meta.series,
+    };
+    chrome.runtime.sendMessage({ type: "SET_PAGE_META", meta: pageMeta });
+  }
+
+  if (data.type === "VG_DUB_FAILED") {
+    chrome.runtime.sendMessage({ type: "DUB_FAILED", translator: str(data.translator, 20), message: str(data.message, 300) });
+  }
 });
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (window !== window.top) return;
+
+  if (msg.type === "VG_RESEND") {
+    const jobs = [];
+    if (pageMeta) jobs.push(chrome.runtime.sendMessage({ type: "SET_PAGE_META", meta: pageMeta }));
+    if (extracted.size) jobs.push(chrome.runtime.sendMessage({ type: "ADD_FROM_PAGE", items: [...extracted.values()] }));
+    Promise.allSettled(jobs).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  // Попап выбрал озвучку: просим экстрактор достать ссылки на неё.
+  if (msg.type === "VG_FETCH_DUB") {
+    window.postMessage({ type: "VG_FETCH_DUB", translator: String(msg.translator) }, "*");
+    sendResponse({ ok: true });
+  }
+});
+
+// Экстрактор мог отработать раньше нас — просим его повторить всё, что он нашёл.
+if (window === window.top) window.postMessage({ type: "VG_HELLO" }, "*");
+

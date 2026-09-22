@@ -24,6 +24,9 @@ section { padding: 12px; border-bottom: 1px solid #1c1f26; }
 .best-title { font-weight: 600; margin-bottom: 3px; }
 .best-sub { color: #8b93a1; font-size: 11px; margin-bottom: 10px; word-break: break-all; }
 .best-row { display: flex; gap: 8px; }
+.dub-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #8b93a1; font-size: 11px; }
+.dub-row[hidden] { display: none; }
+.dub-sel { flex: 1; min-width: 0; height: 28px; font-size: 12px; }
 .btn {
   border: none; border-radius: 8px; padding: 9px 12px; cursor: pointer;
   font-weight: 600; font-size: 13px; color: #fff;

@@ -24,17 +24,21 @@ import time
 from pathlib import Path
 
 # Хост сверяет её со своей копией и перезапускает демон, если код обновился.
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 APP_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "VideoGrabber"
 DAEMON_FILE = APP_DIR / "daemon.json"
 SETTINGS_FILE = APP_DIR / "settings.json"
 LOG_FILE = APP_DIR / "daemon.log"
+# Список задач переживает перезапуск службы: по нему дашборд показывает историю загрузок.
+HISTORY_FILE = APP_DIR / "history.json"
 COOKIE_DIR = APP_DIR / "cookies"
 
 # Без задач и без запросов от браузера столько времени — выходим, чтобы не висеть в памяти.
 IDLE_EXIT_SEC = 30 * 60
 MAX_TASKS_KEPT = 200
+# Сколько загрузок идёт одновременно. Остальные ждут в очереди и стартуют по мере освобождения мест.
+MAX_PARALLEL = 5
 
 # YouTube перестаёт пускать yt-dlp старше пары месяцев: меняются клиенты плеера и
 # JS-челленджи, и загрузки начинают падать на ровном месте (403 в середине файла).
@@ -42,6 +46,14 @@ MAX_TASKS_KEPT = 200
 UPDATE_EVERY_SEC = 3 * 24 * 3600
 UPDATE_TIMEOUT_SEC = 300
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+# Демон живёт без консоли (pythonw), и yt-dlp тогда печатает в кодировке системы (cp1251),
+# а мы читаем UTF-8 — кириллица в именах превращалась в «�». Заставляем его писать UTF-8.
+CHILD_ENV = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+UTF8_OUT = ["--encoding", "utf-8"]
+
+# Расширение в готовом имени лишнее: его допишет yt-dlp через %(ext)s, иначе выходит .mp4.mp4.
+MEDIA_SUFFIX_RE = re.compile(r"\.(mp4|m4v|webm|mkv|mov|avi|flv|ts|m3u8|mpd|mp3|m4a|aac|ogg|wav|flac)$", re.I)
 
 _log_lock = threading.Lock()
 
@@ -200,6 +212,33 @@ PROGRESS_RE = re.compile(
 
 # ---------- менеджер очереди ----------
 
+TASK_DEFAULTS = {
+    "id": 0,
+    "kind": "video",
+    "url": "",
+    "title": "",
+    "format": "best",
+    "status": "queued",   # queued | running | done | error | canceled
+    "progress": 0.0,
+    "line": "",
+    "file": "",
+    "message": "",
+    "dir": "",
+    "index": 0,
+    "playlist": "",
+    "name": "",           # готовое имя файла без расширения (у потоков с плеера)
+    "cookie_file": "",
+    "added": 0,
+    "started": 0,
+    "finished": 0,
+    "path": "",           # полный путь к файлу — для «показать в папке»
+    "total": "",          # размер, скорость и остаток времени — как их печатает yt-dlp
+    "speed": "",
+    "eta": "",
+    "log": [],            # последние строки yt-dlp: по ним видно, что сломалось
+}
+
+
 class Manager:
     def __init__(self):
         self.lock = threading.RLock()
@@ -220,24 +259,7 @@ class Manager:
     def new_task(self, **kw):
         with self.lock:
             self.seq += 1
-            task = {
-                "id": self.seq,
-                "kind": "video",
-                "url": "",
-                "title": "",
-                "format": "best",
-                "status": "queued",   # queued | running | done | error | canceled
-                "progress": 0.0,
-                "line": "",
-                "file": "",
-                "message": "",
-                "dir": self.settings["dir"],
-                "index": 0,
-                "playlist": "",
-                "name": "",           # готовое имя файла без расширения (у потоков с плеера)
-                "cookie_file": "",
-                "added": time.time(),
-            }
+            task = dict(TASK_DEFAULTS, id=self.seq, dir=self.settings["dir"], added=time.time(), log=[])
             task.update(kw)
             self.tasks.append(task)
             if len(self.tasks) > MAX_TASKS_KEPT:
@@ -250,11 +272,55 @@ class Manager:
             return task
 
     def public_tasks(self):
+        # Все задачи, а не хвост: при очереди в полсотни роликов дашборд должен видеть каждую.
         with self.lock:
-            out = []
-            for t in self.tasks[-60:]:
-                out.append({k: v for k, v in t.items() if k != "cookie_file"})
-            return out
+            return [{k: v for k, v in t.items() if k != "cookie_file"} for t in self.tasks]
+
+    # --- история на диске ---
+
+    def load_history(self):
+        """Прошлые задачи после перезапуска. Незаконченные помечаем ошибкой, а не
+        запускаем снова: их файлы кук уже удалены, а молча качать заново не стоит."""
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+        except Exception:
+            return
+        with self.lock:
+            for t in saved.get("tasks", []):
+                t = dict(TASK_DEFAULTS, **t)
+                if t.get("status") in ("queued", "running"):
+                    t["status"] = "error"
+                    t["message"] = "прервано: служба перезапускалась"
+                    t["finished"] = t.get("finished") or time.time()
+                t["cookie_file"] = ""
+                t["line"] = ""
+                t["speed"] = t["eta"] = ""
+                self.tasks.append(t)
+            self.tasks = self.tasks[-MAX_TASKS_KEPT:]
+            self.seq = max([self.seq] + [t.get("id", 0) for t in self.tasks])
+
+    def history_saver(self):
+        """Раз в пару секунд пишем список на диск, если он поменялся."""
+        last = ""
+        while not self.stop:
+            time.sleep(2)
+            with self.lock:
+                # Прогресс и скорость меняются каждую секунду, их в сравнение не берём.
+                snap = [{k: v for k, v in t.items()
+                         if k not in ("cookie_file", "line", "progress", "speed", "eta")}
+                        for t in self.tasks]
+            text = json.dumps({"tasks": snap}, ensure_ascii=False)
+            if text == last:
+                continue
+            try:
+                tmp = HISTORY_FILE.with_suffix(".tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(text)
+                tmp.replace(HISTORY_FILE)
+                last = text
+            except Exception as e:
+                log(f"история не записана: {e}")
 
     # --- команды ---
 
@@ -292,11 +358,45 @@ class Manager:
                 playlist=req.get("playlist_title", ""),
                 # У потока с плеера yt-dlp знает только имя вида "manifest", поэтому
                 # имя файла приходит от расширения.
-                name=sanitize_folder(req.get("filename", "")) if req.get("filename") else "",
+                name=sanitize_folder(MEDIA_SUFFIX_RE.sub("", req.get("filename", "").strip()))
+                if req.get("filename") else "",
                 cookie_file=cookie_file,
             )
+        # Повтор упавшей загрузки: новая задача встаёт в конец очереди, старая запись
+        # больше не нужна, иначе в истории копились бы дубли.
+        if req.get("replaces"):
+            self.cmd_remove({"id": req["replaces"]})
         log(f"enqueue #{t['id']} {t['kind']} {t['url']}")
         return {"ok": True, "id": t["id"]}
+
+    def cmd_remove(self, req):
+        """Убрать одну завершённую задачу из списка (файл на диске не трогаем)."""
+        tid = req.get("id")
+        with self.lock:
+            before = len(self.tasks)
+            self.tasks = [t for t in self.tasks
+                          if not (t["id"] == tid and t["status"] not in ("queued", "running"))]
+            return {"ok": len(self.tasks) < before}
+
+    def cmd_reveal(self, req):
+        """Показать файл в проводнике, выделив его. Нет файла — открываем папку задачи."""
+        tid = req.get("id")
+        with self.lock:
+            task = next((t for t in self.tasks if t["id"] == tid), None)
+        if not task:
+            return {"ok": False, "message": "нет такой задачи"}
+        path = task.get("path") or ""
+        if not path and task.get("file"):
+            path = str(Path(task["dir"]) / task["file"])
+        try:
+            if path and Path(path).exists() and sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", str(Path(path))])
+                return {"ok": True}
+            if path and Path(path).is_dir():
+                return self.cmd_open_dir({"dir": path})
+            return self.cmd_open_dir({"dir": task.get("dir", "")})
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
 
     def cmd_cancel(self, req):
         tid = req.get("id")
@@ -307,6 +407,7 @@ class Manager:
                 if t["status"] == "queued":
                     t["status"] = "canceled"
                     t["message"] = "отменено"
+                    t["finished"] = time.time()
                     self.release_cookies(t)
                     return {"ok": True}
                 if t["status"] == "running":
@@ -388,6 +489,8 @@ class Manager:
             "tasks": self.public_tasks(),
             "settings": self.settings,
             "dialog_open": self.dialog_open,
+            "parallel": MAX_PARALLEL,
+            "version": VERSION,
             "tools": {
                 "ytdlp": bool(yt),
                 "ffmpeg": bool(shutil.which("ffmpeg")),
@@ -416,6 +519,10 @@ class Manager:
             return self.cmd_pick_folder(req)
         if cmd == "open_dir":
             return self.cmd_open_dir(req)
+        if cmd == "remove":
+            return self.cmd_remove(req)
+        if cmd == "reveal":
+            return self.cmd_reveal(req)
         if cmd == "shutdown":
             self.stop = True
             with self.lock:
@@ -469,36 +576,51 @@ class Manager:
     # --- рабочий цикл ---
 
     def worker(self):
+        """Раздаёт задачи из очереди по порядку, не больше MAX_PARALLEL сразу.
+        Каждая загрузка идёт в своём потоке; закончилась — место сразу берёт следующая."""
         while not self.stop:
             task = None
+            idle = False
             with self.cv:
-                for t in self.tasks:
-                    if t["status"] == "queued":
-                        task = t
-                        break
+                running = sum(1 for t in self.tasks if t["status"] == "running")
+                if running < MAX_PARALLEL:
+                    task = next((t for t in self.tasks if t["status"] == "queued"), None)
                 if task is None:
                     self.cv.wait(timeout=5)
-                    if self.should_exit():
-                        log("простой — демон завершается")
-                        os._exit(0)
-                    # Только на пустой очереди: pip не перезапишет файлы под работающим yt-dlp.
-                    self.maybe_update_ytdlp()
-                    continue
-                task["status"] = "running"
-                task["line"] = "запуск…"
-            try:
-                if task["kind"] == "playlist":
-                    self.expand_playlist(task)
+                    idle = not any(t["status"] in ("queued", "running") for t in self.tasks)
                 else:
-                    self.download(task)
-            except Exception as e:
-                log(f"task #{task['id']} crashed: {e!r}")
-                with self.lock:
-                    if task["status"] == "running":
-                        task["status"] = "error"
-                        task["message"] = str(e)
-            finally:
-                self.release_cookies(task)
+                    task["status"] = "running"
+                    task["line"] = "запуск…"
+            if task is not None:
+                threading.Thread(target=self.run_task, args=(task,), daemon=True).start()
+                continue
+            if idle:
+                if self.should_exit():
+                    log("простой — демон завершается")
+                    os._exit(0)
+                # Только на пустой очереди: pip не перезапишет файлы под работающим yt-dlp.
+                self.maybe_update_ytdlp()
+
+    def run_task(self, task):
+        task["started"] = time.time()
+        try:
+            if task["kind"] == "playlist":
+                self.expand_playlist(task)
+            else:
+                self.download(task)
+        except Exception as e:
+            log(f"task #{task['id']} crashed: {e!r}")
+            with self.lock:
+                if task["status"] == "running":
+                    task["status"] = "error"
+                    task["message"] = str(e)
+        finally:
+            task["finished"] = time.time()
+            task["speed"] = task["eta"] = ""
+            self.release_cookies(task)
+            # Место освободилось — будим раздатчик, чтобы следующая стартовала сразу.
+            with self.cv:
+                self.cv.notify_all()
 
     def maybe_update_ytdlp(self):
         """Метку времени ставим до попытки: без сети иначе долбились бы каждые пять секунд."""
@@ -523,7 +645,7 @@ class Manager:
             task["message"] = "yt-dlp не найден"
             return
 
-        cmd = yt + ["--flat-playlist", "-J", "--no-warnings", "--ignore-config"]
+        cmd = yt + ["--flat-playlist", "-J", "--no-warnings", "--ignore-config"] + UTF8_OUT
         if task["cookie_file"]:
             cmd += ["--cookies", task["cookie_file"]]
         cmd += [task["url"]]
@@ -534,7 +656,7 @@ class Manager:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace",
-                creationflags=CREATE_NO_WINDOW,
+                creationflags=CREATE_NO_WINDOW, env=CHILD_ENV,
             )
         except Exception as e:
             task["status"] = "error"
@@ -557,6 +679,7 @@ class Manager:
 
         if proc.returncode != 0 or not (out or "").strip():
             tail = (err or "").strip().splitlines()
+            task["log"] = [s[:400] for s in tail[-15:]]
             task["status"] = "error"
             task["message"] = (tail[-1] if tail else "плейлист не прочитан")[:200]
             return
@@ -626,6 +749,7 @@ class Manager:
             "--ignore-config",
             "--windows-filenames",
             "--trim-filenames", "150",
+            *UTF8_OUT,
             "--retries", "10",
             "--fragment-retries", "20",
             # Решатель JS-челленджей YouTube: без него остаются только низкие качества.
@@ -676,6 +800,7 @@ class Manager:
                 encoding="utf-8",
                 errors="replace",
                 creationflags=CREATE_NO_WINDOW,
+                env=CHILD_ENV,
             )
         except Exception as e:
             task["status"] = "error"
@@ -692,22 +817,35 @@ class Manager:
                 continue
 
             m = PROGRESS_RE.search(line)
+            if not m:
+                # Всё, кроме строк прогресса, — в журнал задачи для дашборда.
+                task["log"] = (task["log"] + [line[:400]])[-15:]
             if m:
                 task["progress"] = float(m.group("pct"))
                 speed = m.group("speed") or ""
                 eta = m.group("eta") or ""
+                task["total"] = m.group("total").lstrip("~")
+                task["speed"] = "" if speed.startswith("Unknown") else speed
+                task["eta"] = "" if eta.startswith("Unknown") else eta
                 task["line"] = f"{m.group('pct')}% из {m.group('total')}" + \
                                (f" · {speed}" if speed else "") + (f" · ETA {eta}" if eta else "")
             elif "Destination:" in line:
-                task["file"] = os.path.basename(line.split("Destination:", 1)[1].strip())
+                task["path"] = line.split("Destination:", 1)[1].strip()
+                task["file"] = os.path.basename(task["path"])
                 if not task["title"] or task["title"].startswith("http"):
                     task["title"] = task["file"]
+            elif line.endswith("has already been downloaded"):
+                m3 = re.match(r"\[download\]\s+(.+?)\s+has already been downloaded", line)
+                if m3:
+                    task["path"] = m3.group(1)
+                    task["file"] = os.path.basename(task["path"])
             elif "Merging formats into" in line:
                 task["line"] = "склеиваю видео и звук…"
                 task["progress"] = 99.0
                 # Имя после склейки и есть итоговое — до него в Destination был кусок (.f251.webm).
                 m2 = re.search(r'Merging formats into "(.+?)"', line)
                 if m2:
+                    task["path"] = m2.group(1)
                     task["file"] = os.path.basename(m2.group(1))
                     task["title"] = task["file"]
             elif "[ExtractAudio]" in line:
@@ -833,6 +971,8 @@ def main():
     tmp.replace(DAEMON_FILE)
     log(f"демон поднят: порт {port}, pid {os.getpid()}")
 
+    MANAGER.load_history()
+    threading.Thread(target=MANAGER.history_saver, daemon=True).start()
     threading.Thread(target=MANAGER.worker, daemon=True).start()
     try:
         server.serve_forever(poll_interval=1)

@@ -1,7 +1,6 @@
 // Video Grabber — логика попапа.
 // Качает не попап, а служба загрузок: окно можно закрывать, загрузка не прервётся.
 
-const HOST_NAME = "com.videograbber.ytdlp";
 const params = new URLSearchParams(location.search);
 const DETACHED = params.get("detached") === "1";
 
@@ -9,64 +8,13 @@ let currentTab = null;
 let lastSettings = { dir: "" };
 let pollTimer = null;
 
-// Короткий доступ к переводам.
-const t = (key, ...args) => chrome.i18n.getMessage(key, args.length ? args : undefined) || key;
+// Озвучки со страницы плеера (HDRezka). Сайт помнит последнюю выбранную и отдаёт её,
+// поэтому выбор держим здесь: по умолчанию первая в списке.
+let pageMeta = null;
+let dubChoice = "";
+const dubRequested = new Set();
 
-function applyI18n() {
-  for (const el of document.querySelectorAll("[data-i18n]")) {
-    el.textContent = t(el.dataset.i18n);
-  }
-  for (const el of document.querySelectorAll("[data-i18n-title]")) {
-    el.title = t(el.dataset.i18nTitle);
-  }
-}
-
-// ---------- связь с нативным хостом ----------
-// Один порт на всё время жизни окна: каждое подключение поднимает python,
-// поэтому опрос статуса по новому порту был бы расточительным.
-
-const host = {
-  port: null,
-  waiting: [],
-
-  connect() {
-    if (this.port) return this.port;
-    this.port = chrome.runtime.connectNative(HOST_NAME);
-    this.port.onMessage.addListener((msg) => {
-      const w = this.waiting.shift();
-      if (w) w.resolve(msg);
-    });
-    this.port.onDisconnect.addListener(() => {
-      const err = chrome.runtime.lastError;
-      this.port = null;
-      const pending = this.waiting.splice(0);
-      // Хост уходит сам после каждого ответа только в старых версиях; здесь обрыв
-      // с незакрытыми запросами — настоящая ошибка, без запросов — просто закрытие.
-      for (const w of pending) w.reject(new Error(err ? err.message : "disconnected"));
-    });
-    return this.port;
-  },
-
-  send(msg) {
-    return new Promise((resolve, reject) => {
-      let port;
-      try {
-        port = this.connect();
-      } catch (e) {
-        reject(new Error(t("hostNotInstalled")));
-        return;
-      }
-      this.waiting.push({ resolve, reject });
-      try {
-        port.postMessage(msg);
-      } catch (e) {
-        this.waiting.pop();
-        this.port = null;
-        reject(e);
-      }
-    });
-  },
-};
+// Переводы и связь со службой загрузок — в host.js.
 
 // ---------- вспомогательное ----------
 
@@ -109,6 +57,64 @@ async function resolveTab() {
   return tabs.find((x) => x.id === wanted) || tabs[0] || null;
 }
 
+// ---------- озвучки ----------
+
+// Ссылки и озвучки вкладки. Сначала просим страницу дослать их: воркер мог уснуть и забыть.
+// На страницах без content-скрипта (chrome://) запрос падает — это нормально.
+async function fetchMedia() {
+  await chrome.tabs.sendMessage(currentTab.id, { type: "VG_RESEND" }, { frameId: 0 }).catch(() => {});
+  const resp = await chrome.runtime.sendMessage({ type: "GET_MEDIA", tabId: currentTab.id });
+  return { media: (resp && resp.media) || [], meta: (resp && resp.meta) || null };
+}
+
+const hasDubs = () => !!(pageMeta && pageMeta.translators && pageMeta.translators.length > 1);
+
+function renderDubs() {
+  const row = document.getElementById("dubRow");
+  const sel = document.getElementById("dubSelect");
+  row.hidden = !hasDubs();
+  if (row.hidden) return;
+  const ids = pageMeta.translators.map((x) => x.id);
+  if (!ids.includes(dubChoice)) dubChoice = ids[0];
+  const sig = ids.join(",");
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.innerHTML = "";
+    for (const tr of pageMeta.translators) {
+      const opt = document.createElement("option");
+      opt.value = tr.id;
+      opt.textContent = tr.name || tr.id;
+      sel.append(opt);
+    }
+  }
+  sel.value = dubChoice;
+}
+
+function requestDub(id) {
+  dubRequested.add(id);
+  return chrome.tabs.sendMessage(currentTab.id, { type: "VG_FETCH_DUB", translator: id }, { frameId: 0 }).catch(() => {});
+}
+
+// Ждём, пока страница пришлёт ссылки на озвучку (или сайт откажет).
+async function waitForDub(id, timeoutMs = 8000) {
+  const since = Date.now();
+  while (Date.now() - since < timeoutMs) {
+    const { media, meta } = await fetchMedia();
+    const items = media.filter((m) => m.source === "extractor" && m.translator === id);
+    if (items.length) return { items };
+    const err = meta && meta.dubError;
+    if (err && err.translator === id && err.at >= since - 1000) return { items: [], error: err.message || "?" };
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { items: [], error: "timeout" };
+}
+
+// Ссылки плеера на выбранную озвучку. Чужие озвучки из списка прячем, чтобы не перепутать.
+function visibleMedia(media) {
+  if (!hasDubs()) return media;
+  return media.filter((m) => m.source !== "extractor" || !m.translator || m.translator === dubChoice);
+}
+
 // ---------- прямые медиа ----------
 
 async function loadMedia() {
@@ -118,13 +124,19 @@ async function loadMedia() {
 
   if (!currentTab) { empty.style.display = "block"; return; }
 
-  // Просим страницу дослать ссылки плеера: воркер мог уснуть и забыть их.
-  // На страницах без content-скрипта (chrome://) запрос падает — это нормально.
-  await chrome.tabs.sendMessage(currentTab.id, { type: "VG_RESEND" }, { frameId: 0 }).catch(() => {});
+  const data = await fetchMedia();
+  pageMeta = data.meta;
+  renderDubs();
 
-  const resp = await chrome.runtime.sendMessage({ type: "GET_MEDIA", tabId: currentTab.id });
-  const media = (resp && resp.media) || [];
-  media.sort((a, b) => (b.size || 0) - (a.size || 0));
+  // Ссылок на выбранную озвучку ещё нет — запросим их один раз и перерисуем список.
+  if (hasDubs() && !dubRequested.has(dubChoice) &&
+      !data.media.some((m) => m.source === "extractor" && m.translator === dubChoice)) {
+    const id = dubChoice;
+    requestDub(id).then(() => waitForDub(id)).then(() => { if (dubChoice === id) loadMedia(); });
+  }
+
+  const media = visibleMedia(data.media);
+  media.sort((a, b) => (b.size || 0) - (a.size || 0) || (b.quality || 0) - (a.quality || 0));
 
   if (!media.length) {
     empty.style.display = "block";
@@ -179,9 +191,24 @@ async function loadMedia() {
 // Лучшая ссылка из конфига плеера с учётом выбранного потолка качества.
 // Прямой mp4 надёжнее потока из кусочков, поэтому при равном качестве берём его.
 async function bestExtracted(format) {
-  await chrome.tabs.sendMessage(currentTab.id, { type: "VG_RESEND" }, { frameId: 0 }).catch(() => {});
-  const resp = await chrome.runtime.sendMessage({ type: "GET_MEDIA", tabId: currentTab.id });
-  const found = ((resp && resp.media) || []).filter((m) => m.source === "extractor");
+  const data = await fetchMedia();
+  pageMeta = data.meta;
+  renderDubs();
+  let found = data.media.filter((m) => m.source === "extractor");
+  if (hasDubs()) {
+    // Только выбранная озвучка. Нет её ссылок — достаём и ждём.
+    found = found.filter((m) => m.translator === dubChoice);
+    if (!found.length) {
+      setStatus(t("dubLoading"), "work");
+      await requestDub(dubChoice);
+      const res = await waitForDub(dubChoice);
+      if (!res.items.length) {
+        setStatus(t("dubFailed", res.error), "err");
+        return { failed: true };
+      }
+      found = res.items;
+    }
+  }
   if (!found.length) return null;
   const cap = { 1080: 10800, 720: 7200, 480: 4800 }[format];
   const fits = cap ? found.filter((m) => m.quality <= cap + 5) : [];
@@ -238,7 +265,14 @@ function renderQueue(tasks) {
   const empty = document.getElementById("queueEmpty");
   list.innerHTML = "";
 
-  const shown = tasks.slice().sort((a, b) => b.id - a.id).slice(0, 40);
+  // Сверху идущие, за ними очередь в порядке старта, ниже последние завершённые.
+  // При длинной очереди иначе идущие загрузки уезжали бы за край списка.
+  const rank = { running: 0, queued: 1 };
+  const shown = tasks.slice().sort((a, b) => {
+    const ra = rank[a.status] ?? 2, rb = rank[b.status] ?? 2;
+    if (ra !== rb) return ra - rb;
+    return ra < 2 ? a.id - b.id : b.id - a.id;
+  }).slice(0, 80);
   empty.style.display = shown.length ? "none" : "block";
 
   for (const task of shown) {
@@ -291,22 +325,7 @@ function renderQueue(tasks) {
       btn.title = t("retryTask");
       btn.onclick = async () => {
         btn.disabled = true;
-        let cookies = "";
-        try {
-          const r = await chrome.runtime.sendMessage({ type: "GET_COOKIES", url: task.url });
-          cookies = (r && r.cookies) || "";
-        } catch { /* без кук */ }
-        await host.send({
-          cmd: "enqueue",
-          url: task.url,
-          format: task.format,
-          cookies,
-          title: task.title,
-          dir: task.dir,
-          index: task.index,
-          playlist_title: task.playlist,
-          filename: task.name || "",
-        }).catch(() => {});
+        await retryTask(task).catch(() => {});
         refreshQueue();
       };
     } else {
@@ -418,6 +437,10 @@ async function syncSource() {
   const changed = !currentTab || !tab || tab.id !== currentTab.id || tab.url !== currentTab.url;
   currentTab = tab;
   if (changed) {
+    // Другая страница — свой список озвучек, прошлый выбор к ней не относится.
+    pageMeta = null;
+    dubChoice = "";
+    dubRequested.clear();
     showSource(tab);
     loadMedia();
   }
@@ -435,7 +458,9 @@ async function init() {
     const format = document.getElementById("ytdlpFormat").value;
     // Сайты вроде HDRezka yt-dlp не знает: ему нужна ссылка из плеера, а не адрес страницы.
     const best = await bestExtracted(format);
-    if (best) {
+    if (best && best.failed) {
+      // Причину уже показали в строке статуса.
+    } else if (best) {
       enqueue(best.url, format, false, best.filename, best.filename);
     } else if (/rezka/i.test(currentTab.url || "")) {
       setStatus(t("noPlayerStreams"), "err");
@@ -446,6 +471,12 @@ async function init() {
   document.getElementById("ytdlpPlaylist").onclick = () => {
     if (!currentTab) return;
     enqueue(currentTab.url, document.getElementById("ytdlpFormat").value, true);
+  };
+
+  document.getElementById("dubSelect").onchange = (e) => {
+    dubChoice = e.target.value;
+    setStatus("", "");
+    loadMedia();
   };
 
   document.getElementById("pickDir").onclick = pickFolder;
@@ -464,6 +495,8 @@ async function init() {
   };
 
   document.getElementById("refresh").onclick = () => { loadMedia(); refreshQueue(); };
+  document.getElementById("dashboard").onclick = () => openDashboard();
+  document.getElementById("dashboardLink").onclick = () => openDashboard();
   document.getElementById("clear").onclick = async () => {
     if (!currentTab) return;
     await chrome.runtime.sendMessage({ type: "CLEAR", tabId: currentTab.id });

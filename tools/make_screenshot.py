@@ -142,6 +142,7 @@ def build_demo_html():
     # Абсолютные пути к css/js, чтобы работало из временной папки.
     html = html.replace('href="popup.css"', f'href="file:///{(ROOT / "popup.css").as_posix()}"')
     html = html.replace('src="popup.js"', f'src="file:///{(ROOT / "popup.js").as_posix()}"')
+    html = html.replace('src="host.js"', f'src="file:///{(ROOT / "host.js").as_posix()}"')
     # Попап в браузере не скроллится — фиксируем высоту под контент.
     html = html.replace("</head>", "<style>body{width:360px}</style></head>")
     return html
