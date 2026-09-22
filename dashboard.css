@@ -55,7 +55,7 @@ button { font: inherit; color: inherit; }
 main { max-width: 1080px; margin: 0 auto; padding: 20px; }
 
 /* --- сводка --- */
-.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
 .stat {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   padding: 12px 14px; text-align: left; cursor: pointer;
@@ -70,6 +70,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px; }
 .stat.ok .stat-num { color: var(--green); }
 .stat.bad .stat-num { color: var(--red); }
 .stat.muted .stat-num { color: var(--faint); }
+.stat.warn .stat-num { color: var(--amber); }
 .stat.zero .stat-num { color: var(--faint); }
 
 /* --- общий прогресс --- */
@@ -114,6 +115,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px; }
   max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .link:hover { color: var(--text); }
+.link:disabled { color: #3a4150; cursor: default; }
 
 /* --- список --- */
 .list { margin-top: 14px; display: flex; flex-direction: column; }
@@ -131,6 +133,9 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px; }
 .row.running { border-color: #2f4a7a; }
 .row.error { border-color: rgba(248, 113, 113, .35); }
 .row.canceled { opacity: .65; }
+.row.paused { border-color: rgba(251, 191, 36, .3); }
+.row.paused .st { background: rgba(251, 191, 36, .12); color: var(--amber); font-size: 11px; }
+.row.paused .fill { background: #b58a1c; }
 
 .st {
   flex: none; width: 30px; height: 30px; border-radius: 50%;

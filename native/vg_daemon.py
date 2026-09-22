@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 # Хост сверяет её со своей копией и перезапускает демон, если код обновился.
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 APP_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "VideoGrabber"
 DAEMON_FILE = APP_DIR / "daemon.json"
@@ -218,7 +218,7 @@ TASK_DEFAULTS = {
     "url": "",
     "title": "",
     "format": "best",
-    "status": "queued",   # queued | running | done | error | canceled
+    "status": "queued",   # queued | running | paused | done | error | canceled
     "progress": 0.0,
     "line": "",
     "file": "",
@@ -238,6 +238,10 @@ TASK_DEFAULTS = {
     "log": [],            # последние строки yt-dlp: по ним видно, что сломалось
 }
 
+# Незаконченные задачи: их не чистим из списка и держим для них файл кук.
+# Пауза сюда входит — задача на паузе ещё будет качаться.
+ACTIVE = ("queued", "running", "paused")
+
 
 class Manager:
     def __init__(self):
@@ -246,6 +250,9 @@ class Manager:
         self.tasks = []          # список словарей в порядке добавления
         self.seq = 0
         self.procs = {}          # task id -> Popen
+        # id задач, чей поток ещё не вышел. После паузы yt-dlp умирает не мгновенно,
+        # и второй запуск той же задачи поверх первого подрался бы за один .part.
+        self.active = set()
         self.settings = load_settings()
         self.last_activity = time.time()
         self.dialog_open = False
@@ -264,8 +271,8 @@ class Manager:
             self.tasks.append(task)
             if len(self.tasks) > MAX_TASKS_KEPT:
                 # Чистим только завершённые с головы списка.
-                keep = [t for t in self.tasks if t["status"] in ("queued", "running")]
-                done = [t for t in self.tasks if t["status"] not in ("queued", "running")]
+                keep = [t for t in self.tasks if t["status"] in ACTIVE]
+                done = [t for t in self.tasks if t["status"] not in ACTIVE]
                 self.tasks = done[-(MAX_TASKS_KEPT - len(keep)):] + keep
                 self.tasks.sort(key=lambda t: t["id"])
             self.cv.notify_all()
@@ -279,8 +286,9 @@ class Manager:
     # --- история на диске ---
 
     def load_history(self):
-        """Прошлые задачи после перезапуска. Незаконченные помечаем ошибкой, а не
-        запускаем снова: их файлы кук уже удалены, а молча качать заново не стоит."""
+        """Прошлые задачи после перезапуска. Незаконченные ставим на паузу, а не
+        запускаем сами: молча качать заново не стоит. Кнопка «продолжить» докачает
+        их с места обрыва. Файлы кук при этом уже потеряны."""
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 saved = json.load(f)
@@ -290,9 +298,8 @@ class Manager:
             for t in saved.get("tasks", []):
                 t = dict(TASK_DEFAULTS, **t)
                 if t.get("status") in ("queued", "running"):
-                    t["status"] = "error"
+                    t["status"] = "paused"
                     t["message"] = "прервано: служба перезапускалась"
-                    t["finished"] = t.get("finished") or time.time()
                 t["cookie_file"] = ""
                 t["line"] = ""
                 t["speed"] = t["eta"] = ""
@@ -375,7 +382,7 @@ class Manager:
         with self.lock:
             before = len(self.tasks)
             self.tasks = [t for t in self.tasks
-                          if not (t["id"] == tid and t["status"] not in ("queued", "running"))]
+                          if not (t["id"] == tid and t["status"] not in ACTIVE)]
             return {"ok": len(self.tasks) < before}
 
     def cmd_reveal(self, req):
@@ -404,7 +411,7 @@ class Manager:
             for t in self.tasks:
                 if t["id"] != tid:
                     continue
-                if t["status"] == "queued":
+                if t["status"] in ("queued", "paused"):
                     t["status"] = "canceled"
                     t["message"] = "отменено"
                     t["finished"] = time.time()
@@ -421,14 +428,65 @@ class Manager:
 
     def cmd_cancel_all(self, req):
         with self.lock:
-            ids = [t["id"] for t in self.tasks if t["status"] in ("queued", "running")]
+            ids = [t["id"] for t in self.tasks if t["status"] in ACTIVE]
         for tid in ids:
             self.cmd_cancel({"id": tid})
         return {"ok": True, "count": len(ids)}
 
+    def cmd_pause(self, req):
+        """Пауза = остановить yt-dlp, оставив недокачанный .part на диске. При
+        продолжении yt-dlp сам докачает его с того же места (--continue по умолчанию)."""
+        tid = req.get("id")
+        with self.lock:
+            for t in self.tasks:
+                if t["id"] != tid:
+                    continue
+                if t["status"] not in ("queued", "running"):
+                    return {"ok": False, "message": "задача не качается"}
+                was_running = t["status"] == "running"
+                t["status"] = "paused"
+                t["message"] = ""
+                t["speed"] = t["eta"] = ""
+                proc = self.procs.get(tid)
+                if was_running and proc:
+                    kill_tree(proc.pid)
+                log(f"#{tid} на паузе")
+                return {"ok": True}
+        return {"ok": False, "message": "нет такой задачи"}
+
+    def cmd_resume(self, req):
+        """Обратно в очередь на своё прежнее место: раздатчик берёт задачи по порядку."""
+        tid = req.get("id")
+        with self.lock:
+            for t in self.tasks:
+                if t["id"] != tid:
+                    continue
+                if t["status"] != "paused":
+                    return {"ok": False, "message": "задача не на паузе"}
+                t["status"] = "queued"
+                t["message"] = ""
+                t["line"] = ""
+                self.cv.notify_all()
+                return {"ok": True}
+        return {"ok": False, "message": "нет такой задачи"}
+
+    def cmd_pause_all(self, req):
+        with self.lock:
+            ids = [t["id"] for t in self.tasks if t["status"] in ("queued", "running")]
+            for tid in ids:
+                self.cmd_pause({"id": tid})
+        return {"ok": True, "count": len(ids)}
+
+    def cmd_resume_all(self, req):
+        with self.lock:
+            ids = [t["id"] for t in self.tasks if t["status"] == "paused"]
+            for tid in ids:
+                self.cmd_resume({"id": tid})
+        return {"ok": True, "count": len(ids)}
+
     def cmd_clear_done(self, req):
         with self.lock:
-            self.tasks = [t for t in self.tasks if t["status"] in ("queued", "running")]
+            self.tasks = [t for t in self.tasks if t["status"] in ACTIVE]
         return {"ok": True}
 
     def cmd_set_dir(self, req):
@@ -511,6 +569,14 @@ class Manager:
             return self.cmd_cancel(req)
         if cmd == "cancel_all":
             return self.cmd_cancel_all(req)
+        if cmd == "pause":
+            return self.cmd_pause(req)
+        if cmd == "resume":
+            return self.cmd_resume(req)
+        if cmd == "pause_all":
+            return self.cmd_pause_all(req)
+        if cmd == "resume_all":
+            return self.cmd_resume_all(req)
         if cmd == "clear_done":
             return self.cmd_clear_done(req)
         if cmd == "set_dir":
@@ -563,7 +629,7 @@ class Manager:
             return
         with self.lock:
             still_needed = any(
-                t["cookie_file"] == path and t["status"] in ("queued", "running")
+                t["cookie_file"] == path and t["status"] in ACTIVE
                 for t in self.tasks
             )
         if still_needed:
@@ -584,13 +650,15 @@ class Manager:
             with self.cv:
                 running = sum(1 for t in self.tasks if t["status"] == "running")
                 if running < MAX_PARALLEL:
-                    task = next((t for t in self.tasks if t["status"] == "queued"), None)
+                    task = next((t for t in self.tasks if t["status"] == "queued"
+                                 and t["id"] not in self.active), None)
                 if task is None:
                     self.cv.wait(timeout=5)
                     idle = not any(t["status"] in ("queued", "running") for t in self.tasks)
                 else:
                     task["status"] = "running"
                     task["line"] = "запуск…"
+                    self.active.add(task["id"])
             if task is not None:
                 threading.Thread(target=self.run_task, args=(task,), daemon=True).start()
                 continue
@@ -602,7 +670,8 @@ class Manager:
                 self.maybe_update_ytdlp()
 
     def run_task(self, task):
-        task["started"] = time.time()
+        # После паузы время старта прежнее: иначе «заняло» в дашборде врало бы.
+        task["started"] = task["started"] or time.time()
         try:
             if task["kind"] == "playlist":
                 self.expand_playlist(task)
@@ -615,12 +684,14 @@ class Manager:
                     task["status"] = "error"
                     task["message"] = str(e)
         finally:
-            task["finished"] = time.time()
-            task["speed"] = task["eta"] = ""
-            self.release_cookies(task)
-            # Место освободилось — будим раздатчик, чтобы следующая стартовала сразу.
             with self.cv:
+                if task["status"] not in ACTIVE:
+                    task["finished"] = time.time()
+                task["speed"] = task["eta"] = ""
+                self.active.discard(task["id"])
+                # Место освободилось — будим раздатчик, чтобы следующая стартовала сразу.
                 self.cv.notify_all()
+            self.release_cookies(task)
 
     def maybe_update_ytdlp(self):
         """Метку времени ставим до попытки: без сети иначе долбились бы каждые пять секунд."""
@@ -632,8 +703,9 @@ class Manager:
         update_ytdlp()
 
     def should_exit(self):
+        # С задачами на паузе не выходим: вместе со службой пропали бы их куки.
         with self.lock:
-            busy = any(t["status"] in ("queued", "running") for t in self.tasks)
+            busy = any(t["status"] in ACTIVE for t in self.tasks)
         return (not busy) and (not self.dialog_open) and (time.time() - self.last_activity > IDLE_EXIT_SEC)
 
     # --- плейлист ---
@@ -674,7 +746,8 @@ class Manager:
             with self.lock:
                 self.procs.pop(task["id"], None)
 
-        if task["status"] == "canceled":
+        # Отменили или поставили на паузу, пока читали.
+        if task["status"] != "running":
             return
 
         if proc.returncode != 0 or not (out or "").strip():
@@ -859,8 +932,9 @@ class Manager:
         with self.lock:
             self.procs.pop(task["id"], None)
 
-        if task["status"] == "canceled":
-            log(f"#{task['id']} отменено")
+        # Отмена или пауза: процесс убит нами, его код возврата ничего не значит.
+        if task["status"] != "running":
+            log(f"#{task['id']} остановлено: {task['status']}")
             return
 
         if proc.returncode == 0:
@@ -972,6 +1046,12 @@ def main():
     log(f"демон поднят: порт {port}, pid {os.getpid()}")
 
     MANAGER.load_history()
+    # Куки прошлой жизни службы никому не принадлежат: ссылки на них load_history стёр.
+    for old in COOKIE_DIR.glob("*.txt"):
+        try:
+            old.unlink()
+        except Exception:
+            pass
     threading.Thread(target=MANAGER.history_saver, daemon=True).start()
     threading.Thread(target=MANAGER.worker, daemon=True).start()
     try:

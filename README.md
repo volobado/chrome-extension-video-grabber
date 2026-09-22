@@ -21,6 +21,7 @@ Most "video downloaders" fall into two camps: browser extensions that only handl
 - **Downloads can't be knocked off course.** The popup doesn't do the downloading: a separate local service does. Close the popup, switch tabs, minimise the browser, click somewhere by accident, and the file still lands. Reopen the popup and the same progress is waiting for you.
 - **Whole playlists in one click.** On a playlist page a second button shows up. Every video is queued into its own folder named after the playlist, numbered in order, so nothing gets muddled.
 - **A queue you can see.** Progress, speed and time left for each item. Cancel any of them, retry a failed one with a single button.
+- **Pause and resume.** Pause one download or all of them at once, resume later: yt-dlp picks up the half-downloaded file where it stopped instead of starting over. Downloads cut short by a restart of the service come back paused, ready to resume.
 - **Five at a time, the rest wait their turn.** Throw fifty videos at it: five download in parallel, and as soon as one finishes the next one in line takes its place.
 - **A downloads page, like Chrome's own.** The 📊 button opens a tab with everything that's downloading, queued, done or failed, grouped by day, with search and filters. Every failure keeps its reason and the last lines of the yt-dlp log, so you can see what broke. The history survives restarts.
 - **You pick the folder.** Not just Downloads: hit "change" and choose anywhere. The path is remembered.
@@ -90,7 +91,7 @@ The YouTube path, and the one you'll use most. Press the red button and yt-dlp d
 On a playlist page, **"Whole playlist (own folder)"** appears below it. The extension reads the list, creates a folder named after the playlist, and queues every video in order: `01 - Title.mp4`, `02 - ...`, and so on.
 
 **"Downloads" section**
-The queue: what's downloading, what's waiting, what's finished. `✕` cancels, `↻` retries a failed item into the same folder with the same number. `cancel all` and `clear finished` tidy the list.
+The queue: what's downloading, what's waiting, what's finished. `⏸` pauses, `▶` resumes, `✕` cancels, `↻` retries a failed item into the same folder with the same number. `Pause all` and `Resume all` act on the whole queue; `cancel all` and `clear finished` tidy the list.
 
 **Bottom section: "Found on page"**
 Direct media files spotted on the page. `⬇` saves instantly. Items tagged `HLS`/`DASH` are streams, so their button routes through yt-dlp instead.

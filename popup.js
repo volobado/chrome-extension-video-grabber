@@ -267,12 +267,17 @@ function renderQueue(tasks) {
 
   // Сверху идущие, за ними очередь в порядке старта, ниже последние завершённые.
   // При длинной очереди иначе идущие загрузки уезжали бы за край списка.
-  const rank = { running: 0, queued: 1 };
+  const rank = { running: 0, queued: 1, paused: 2 };
   const shown = tasks.slice().sort((a, b) => {
-    const ra = rank[a.status] ?? 2, rb = rank[b.status] ?? 2;
+    const ra = rank[a.status] ?? 3, rb = rank[b.status] ?? 3;
     if (ra !== rb) return ra - rb;
-    return ra < 2 ? a.id - b.id : b.id - a.id;
+    return ra < 3 ? a.id - b.id : b.id - a.id;
   }).slice(0, 80);
+
+  // Общие кнопки гаснут, когда им нечего делать.
+  document.getElementById("pauseAll").disabled =
+    !tasks.some((x) => x.status === "running" || x.status === "queued");
+  document.getElementById("resumeAll").disabled = !tasks.some((x) => x.status === "paused");
   empty.style.display = shown.length ? "none" : "block";
 
   for (const task of shown) {
@@ -291,6 +296,9 @@ function renderQueue(tasks) {
     info.className = "info";
     if (task.status === "running") info.textContent = task.line || t("statusDownloading");
     else if (task.status === "queued") info.textContent = t("stQueued");
+    else if (task.status === "paused") {
+      info.textContent = t("stPaused") + (task.progress ? ` · ${Math.floor(task.progress)}%` : "");
+    }
     else if (task.status === "done") {
       // У плейлиста в message лежит число роликов — оно полезнее слова «готово».
       info.textContent = task.kind === "playlist" && task.message ? task.message : t("stDone");
@@ -300,7 +308,7 @@ function renderQueue(tasks) {
 
     meta.append(name, info);
 
-    if (task.status === "running") {
+    if (task.status === "running" || (task.status === "paused" && task.progress)) {
       const bar = document.createElement("div");
       bar.className = "bar";
       const fill = document.createElement("div");
@@ -310,9 +318,27 @@ function renderQueue(tasks) {
       meta.append(bar);
     }
 
+    const btns = document.createElement("div");
+    btns.className = "task-btns";
+
+    // Пауза и продолжение — рядом с отменой.
+    if (["queued", "running", "paused"].includes(task.status)) {
+      const pb = document.createElement("button");
+      pb.className = "link-btn task-btn";
+      const paused = task.status === "paused";
+      pb.textContent = paused ? "▶" : "⏸";
+      pb.title = t(paused ? "resumeTask" : "pauseTask");
+      pb.onclick = async () => {
+        pb.disabled = true;
+        await host.send({ cmd: paused ? "resume" : "pause", id: task.id }).catch(() => {});
+        refreshQueue();
+      };
+      btns.append(pb);
+    }
+
     const btn = document.createElement("button");
     btn.className = "link-btn task-btn";
-    if (task.status === "queued" || task.status === "running") {
+    if (["queued", "running", "paused"].includes(task.status)) {
       btn.textContent = "✕";
       btn.title = t("cancelTask");
       btn.onclick = async () => {
@@ -333,7 +359,8 @@ function renderQueue(tasks) {
       btn.disabled = true;
     }
 
-    li.append(meta, btn);
+    btns.append(btn);
+    li.append(meta, btns);
     list.append(li);
   }
 }
@@ -362,8 +389,11 @@ async function refreshQueue() {
       state.textContent = t("hostNoFfmpeg");
       state.className = "host-state err";
     } else {
-      const active = (st.tasks || []).filter((x) => x.status === "running" || x.status === "queued").length;
-      state.textContent = active ? t("hostBusy", String(active)) : t("hostReady");
+      const all = st.tasks || [];
+      const active = all.filter((x) => x.status === "running" || x.status === "queued").length;
+      const paused = all.filter((x) => x.status === "paused").length;
+      state.textContent = active ? t("hostBusy", String(active))
+        : paused ? t("hostPaused", String(paused)) : t("hostReady");
       state.className = "host-state ok";
     }
   } catch (e) {
@@ -491,6 +521,14 @@ async function init() {
   };
   document.getElementById("clearDone").onclick = async () => {
     await host.send({ cmd: "clear_done" }).catch(() => {});
+    refreshQueue();
+  };
+  document.getElementById("pauseAll").onclick = async () => {
+    await host.send({ cmd: "pause_all" }).catch(() => {});
+    refreshQueue();
+  };
+  document.getElementById("resumeAll").onclick = async () => {
+    await host.send({ cmd: "resume_all" }).catch(() => {});
     refreshQueue();
   };
 

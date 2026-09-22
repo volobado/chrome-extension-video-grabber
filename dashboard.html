@@ -37,6 +37,10 @@
         <span class="stat-num" id="nQueued">0</span>
         <span class="stat-label" data-i18n="fQueued"></span>
       </button>
+      <button class="stat warn" data-filter="paused">
+        <span class="stat-num" id="nPaused">0</span>
+        <span class="stat-label" data-i18n="fPaused"></span>
+      </button>
       <button class="stat ok" data-filter="done">
         <span class="stat-num" id="nDone">0</span>
         <span class="stat-label" data-i18n="fDone"></span>
@@ -71,12 +75,15 @@
         <button class="chip active" data-filter="all" data-i18n="fAll"></button>
         <button class="chip" data-filter="running" data-i18n="fRunning"></button>
         <button class="chip" data-filter="queued" data-i18n="fQueued"></button>
+        <button class="chip" data-filter="paused" data-i18n="fPaused"></button>
         <button class="chip" data-filter="done" data-i18n="fDone"></button>
         <button class="chip" data-filter="error" data-i18n="fError"></button>
         <button class="chip" data-filter="canceled" data-i18n="fCanceled"></button>
       </div>
       <div class="actions">
         <button id="openDir" class="link" data-i18n-title="openDirTitle">📂 <span id="dirPath"></span></button>
+        <button id="pauseAll" class="link" data-i18n="pauseAll"></button>
+        <button id="resumeAll" class="link" data-i18n="resumeAll"></button>
         <button id="retryFailed" class="link" data-i18n="retryFailed"></button>
         <button id="cancelAll" class="link" data-i18n="cancelAll"></button>
         <button id="clearDone" class="link" data-i18n="clearDone"></button>

@@ -58,6 +58,9 @@ const DEMO_TASKS = [
   { id: 3, kind: "video", url: "https://youtu.be/a2", title: "02. Borrow checker",
     status: "queued", progress: 0, line: "", file: "", message: "",
     dir: "D:\\\\Video\\\\YouTube\\\\Rust in Practice", index: 2, playlist: "Rust in Practice", format: "best" },
+  { id: 5, kind: "video", url: "https://youtu.be/a4", title: "Conference talk",
+    status: "paused", progress: 62, line: "", file: "Conference talk.mp4", message: "",
+    dir: "D:\\\\Video\\\\YouTube", index: 0, playlist: "", format: "best" },
   { id: 4, kind: "video", url: "https://youtu.be/a3", title: "Keynote 2026",
     status: "done", progress: 100, line: "", file: "Keynote 2026.mp4", message: "Keynote 2026.mp4",
     dir: "D:\\\\Video\\\\YouTube", index: 0, playlist: "", format: "1080" }

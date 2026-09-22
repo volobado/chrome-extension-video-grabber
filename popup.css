@@ -68,6 +68,15 @@ section { padding: 12px; border-bottom: 1px solid #1c1f26; }
 .item.task.error .info { color: #f87171; }
 .item.task.canceled .name { color: #6b7280; text-decoration: line-through; }
 .item.task.running { border-color: #2f4a7a; }
+.item.task.paused { border-color: #5a4a1e; }
+.item.task.paused .info { color: #fbbf24; }
+.item.task.paused .fill { background: #b58a1c; }
+.task-btns { display: flex; gap: 6px; flex: none; }
+
+.queue-ctl { display: flex; gap: 6px; margin-bottom: 8px; }
+.btn.ctl { flex: 1; background: #23272f; padding: 6px 8px; font-size: 12px; font-weight: 600; }
+.btn.ctl:hover:not(:disabled) { background: #2c313b; }
+.btn.ctl:disabled { color: #4b5260; cursor: default; }
 
 .status { font-size: 11px; margin-top: 8px; min-height: 14px; color: #8b93a1; }
 .status.ok { color: #34d399; }

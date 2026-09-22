@@ -108,7 +108,7 @@ function updateRow(row, task, queuePos) {
 
   // значок состояния
   const st = row.querySelector(".st");
-  const icon = { queued: "…", done: "✓", error: "!", canceled: "–" }[task.status];
+  const icon = { queued: "…", paused: "❚❚", done: "✓", error: "!", canceled: "–" }[task.status];
   if (task.status === "running") {
     if (!st.querySelector(".spin")) { st.textContent = ""; st.append(el("div", "spin")); }
   } else {
@@ -137,7 +137,13 @@ function updateRow(row, task, queuePos) {
 
   // прогресс
   const prog = row.querySelector(".prog");
-  prog.hidden = task.status !== "running";
+  const paused = task.status === "paused";
+  prog.hidden = task.status !== "running" && !(paused && task.progress);
+  if (paused && task.progress) {
+    row.querySelector(".fill").style.width = `${Math.min(100, task.progress)}%`;
+    setText(row.querySelector(".prog-text"), [t("stPaused"), `${task.progress.toFixed(1)}%`,
+      task.total ? humanSize(task.total) : ""].filter(Boolean).join("  ·  "));
+  }
   if (task.status === "running") {
     const pct = Math.max(1, Math.min(100, task.progress || 0));
     row.querySelector(".fill").style.width = `${pct}%`;
@@ -216,6 +222,12 @@ function renderActions(row, task, hasLog) {
   if (task.status === "error" || task.status === "canceled") {
     add("↻ " + t("retryTask"), "", "primary", () => retryTask(task));
   }
+  if (task.status === "paused") {
+    add("▶ " + t("resumeTask"), "", "primary", () => host.send({ cmd: "resume", id: task.id }));
+  }
+  if (task.status === "queued" || task.status === "running") {
+    add("⏸", t("pauseTask"), "icon", () => host.send({ cmd: "pause", id: task.id }));
+  }
   if (hasLog && task.status !== "queued") {
     add(t("actLog"), "", "", () => {
       if (openLogs.has(task.id)) openLogs.delete(task.id); else openLogs.add(task.id);
@@ -225,7 +237,7 @@ function renderActions(row, task, hasLog) {
     await navigator.clipboard.writeText(task.url);
     b.title = t("actCopied");
   });
-  if (task.status === "queued" || task.status === "running") {
+  if (["queued", "running", "paused"].includes(task.status)) {
     add("✕", t("cancelTask"), "icon danger", () => host.send({ cmd: "cancel", id: task.id }));
   } else {
     add(trashIcon(), t("actRemove"), "icon danger", () => host.send({ cmd: "remove", id: task.id }));
@@ -256,8 +268,9 @@ function renderList() {
 
   const running = tasks.filter((x) => x.status === "running").sort((a, b) => a.id - b.id);
   const queued = tasks.filter((x) => x.status === "queued").sort((a, b) => a.id - b.id);
+  const paused = tasks.filter((x) => x.status === "paused").sort((a, b) => a.id - b.id);
   const finished = tasks
-    .filter((x) => !["running", "queued"].includes(x.status))
+    .filter((x) => !["running", "queued", "paused"].includes(x.status))
     .sort((a, b) => (b.finished || b.added) - (a.finished || a.added) || b.id - a.id);
 
   const queuePos = new Map(queued.map((x, i) => [x.id, i + 1]));
@@ -277,6 +290,7 @@ function renderList() {
   };
   push("running", t("grpRunning"), running);
   push("queued", t("grpQueued"), queued);
+  push("paused", t("grpPaused"), paused);
   const byDay = new Map();
   for (const task of finished) {
     const k = dayKey(task.finished || task.added);
@@ -306,10 +320,10 @@ function renderList() {
 function renderStats(st) {
   const count = (s) => tasks.filter((x) => x.status === s).length;
   const n = {
-    running: count("running"), queued: count("queued"), done: count("done"),
+    running: count("running"), queued: count("queued"), paused: count("paused"), done: count("done"),
     error: count("error"), canceled: count("canceled"),
   };
-  for (const [k, id] of [["running", "nRunning"], ["queued", "nQueued"], ["done", "nDone"],
+  for (const [k, id] of [["running", "nRunning"], ["queued", "nQueued"], ["paused", "nPaused"], ["done", "nDone"],
                          ["error", "nError"], ["canceled", "nCanceled"]]) {
     const node = document.getElementById(id);
     setText(node, String(n[k]));
@@ -325,7 +339,7 @@ function renderStats(st) {
   // Общий прогресс: плейлисты-обёртки и отменённые не считаем.
   const real = tasks.filter((x) => x.kind !== "playlist" && x.status !== "canceled");
   const doneN = real.filter((x) => x.status === "done").length;
-  const partial = real.filter((x) => x.status === "running")
+  const partial = real.filter((x) => x.status === "running" || x.status === "paused")
     .reduce((s, x) => s + (x.progress || 0) / 100, 0);
   const pct = real.length ? ((doneN + partial) / real.length) * 100 : 0;
   document.getElementById("overallFill").style.width = `${pct}%`;
@@ -350,7 +364,11 @@ function renderStats(st) {
   if (!tools.ytdlp) { dot.className = "dot err"; setText(state, t("hostNoYtdlp")); }
   else if (!tools.ffmpeg) { dot.className = "dot err"; setText(state, t("hostNoFfmpeg")); }
   else if (n.running || n.queued) { dot.className = "dot busy"; setText(state, t("hostBusy", String(n.running + n.queued))); }
+  else if (n.paused) { dot.className = "dot ok"; setText(state, t("hostPaused", String(n.paused))); }
   else { dot.className = "dot ok"; setText(state, t("hostReady")); }
+
+  document.getElementById("pauseAll").disabled = !(n.running || n.queued);
+  document.getElementById("resumeAll").disabled = !n.paused;
 }
 
 // ---------- опрос службы ----------
@@ -402,6 +420,14 @@ function init() {
   };
   document.getElementById("clearDone").onclick = async () => {
     await host.send({ cmd: "clear_done" }).catch(() => {});
+    refresh();
+  };
+  document.getElementById("pauseAll").onclick = async () => {
+    await host.send({ cmd: "pause_all" }).catch(() => {});
+    refresh();
+  };
+  document.getElementById("resumeAll").onclick = async () => {
+    await host.send({ cmd: "resume_all" }).catch(() => {});
     refresh();
   };
 
