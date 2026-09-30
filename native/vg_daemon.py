@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 # Хост сверяет её со своей копией и перезапускает демон, если код обновился.
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 
 APP_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "VideoGrabber"
 DAEMON_FILE = APP_DIR / "daemon.json"
@@ -33,6 +33,11 @@ LOG_FILE = APP_DIR / "daemon.log"
 # Список задач переживает перезапуск службы: по нему дашборд показывает историю загрузок.
 HISTORY_FILE = APP_DIR / "history.json"
 COOKIE_DIR = APP_DIR / "cookies"
+# Загрузки в сетевую папку идут сначала сюда. HLS после скачивания переупаковывается ffmpeg
+# (FixupM3u8, плюс второй проход faststart): на сетевой папке по Wi-Fi это гоняло гигабайты
+# туда-обратно на <1 МБ/с, и фильм часами висел на 100%. Локально это секунды, а готовый файл
+# yt-dlp сам переносит одним копированием. Переопределяется ключом staging_dir в settings.json.
+STAGING_DIR = APP_DIR / "staging"
 
 # Без задач и без запросов от браузера столько времени — выходим, чтобы не висеть в памяти.
 IDLE_EXIT_SEC = 30 * 60
@@ -154,6 +159,21 @@ def find_js_runtime():
         if shutil.which(name):
             return name
     return None
+
+
+def is_network_path(path):
+    """UNC-путь или буква, подключённая к сетевой папке (net use)."""
+    p = str(path)
+    if p.startswith(("\\\\", "//")):
+        return True
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        drive = os.path.splitdrive(os.path.abspath(p))[0]
+        return bool(drive) and ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4  # DRIVE_REMOTE
+    except Exception:
+        return False
 
 
 def default_dir():
@@ -812,10 +832,17 @@ class Manager:
             name_tpl = f"{task['index']:03d} - {title_tpl}.%(ext)s"
         else:
             name_tpl = f"{title_tpl}.%(ext)s"
-        out_tpl = esc_tpl(task["dir"]) + os.sep + name_tpl
+
+        if is_network_path(task["dir"]):
+            # -P temp работает только с относительным -o: абсолютный путь yt-dlp берёт как есть.
+            staging = Path(self.settings.get("staging_dir") or STAGING_DIR)
+            staging.mkdir(parents=True, exist_ok=True)
+            out = ["-P", f"home:{task['dir']}", "-P", f"temp:{staging}", "-o", name_tpl]
+        else:
+            out = ["-o", esc_tpl(task["dir"]) + os.sep + name_tpl]
 
         args = [
-            "-o", out_tpl,
+            *out,
             "--no-playlist",
             "--newline",
             "--no-update",
@@ -924,6 +951,17 @@ class Manager:
             elif "[ExtractAudio]" in line:
                 task["line"] = "извлекаю звук…"
                 task["progress"] = 99.0
+            elif line.startswith("[Fixup"):
+                # Переупаковка ffmpeg после HLS: без подписи висело «100%», будто зависло.
+                task["line"] = "обрабатываю файл…"
+                task["progress"] = 99.0
+            elif line.startswith("[MoveFiles]"):
+                task["line"] = "переношу в папку…"
+                task["progress"] = 99.0
+                m4 = re.search(r'Moving file ".+?" to "(.+?)"', line)
+                if m4:
+                    task["path"] = m4.group(1)
+                    task["file"] = os.path.basename(task["path"])
             elif line.startswith(("ERROR:", "WARNING:")):
                 tail.append(line)
                 tail = tail[-3:]
