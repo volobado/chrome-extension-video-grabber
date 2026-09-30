@@ -1,5 +1,6 @@
 # Генерируется установщиком, содержит локальные пути и ID расширения
 native/run_host.bat
+native/run_host.sh
 native/com.videograbber.ytdlp.json
 
 # Python
